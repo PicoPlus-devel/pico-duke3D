@@ -1,0 +1,8 @@
+build_*/
+build/
+*.uf2
+*.elf
+*.bin
+*.dis
+*.hex
+.DS_Store
