@@ -15,9 +15,10 @@ if [ -z "${PICO_SDK_PATH}" ]; then
     exit 1
 fi
 
-export CFLAGS="-include $(pwd)/${TAG}_cflags.h"
-export CXXFLAGS="-include $(pwd)/${TAG}_cflags.h"
-
+# NOTE: the -include of ${TAG}_cflags.h and the board/platform/build-type
+# defaults now live in CMakeLists.txt, so a plain `cmake -S . -B build`
+# (e.g. VSCode / CMake Tools) configures identically. The -D flags below are
+# kept for explicitness but are redundant with those defaults.
 cmake -S . -B "$BUILD" \
     -G Ninja \
     -DCMAKE_BUILD_TYPE=MinSizeRel \

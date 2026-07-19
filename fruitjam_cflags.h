@@ -65,6 +65,14 @@
 // hstx_packet.c's IEC 60958 channel-status table.
 #define PICO_SOUND_SAMPLE_FREQ 48000
 
+// Audio buffering for the FRAME-CONTEXT pump: the mixer only advances when
+// the game pumps it (per frame / faketimerhandler / sampletimer), so the sink
+// rings must bridge the longest gap between pumps (heavy scenes can exceed
+// 30 ms). DI ring: 768 islands x 4 samples = 64 ms (malloc'd — at 110 KB it
+// no longer fits the old fixed 0x20076000 pin). I2S ring: 4096 samples =
+// 85 ms (must be a power of two).
+#define I2S_AUDIO_RING_SIZE 4096
+
 // --- SD card (hardware SPI0; PIO-SPI fallback available) --------------------
 #define SD_TX 35   // MOSI
 #define SD_RX 36   // MISO

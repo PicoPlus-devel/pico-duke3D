@@ -50,9 +50,13 @@ if (NOT TARGET pico_hdmi)
         # underrun counter stays frozen through gameplay; at 96 it grew by
         # ~2400/s. Re-enable HSTX_DEBUG=1 here to get the 1 Hz UART dump of
         # frames/s, irqs/s, resyncs, DI level and underrun count.)
+        # pico-duke3D: sized for the FRAME-CONTEXT audio pump (upstream 256/224
+        # assumed a 3 ms IRQ pump). 768 islands = 3072 samples = 64 ms of
+        # buffer at 48 kHz; watermark 640 (~53 ms) leaves push headroom. The
+        # ring (110 KB) is malloc'd from the SRAM heap.
         target_compile_definitions(pico_hdmi INTERFACE
-                    DI_RING_BUFFER_SIZE=256
-                    HSTX_AUDIO_DI_HIGH_WATERMARK=224
+                    DI_RING_BUFFER_SIZE=768
+                    HSTX_AUDIO_DI_HIGH_WATERMARK=640
             )
     else()
         target_include_directories(pico_hdmi INTERFACE

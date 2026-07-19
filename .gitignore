@@ -6,3 +6,6 @@ build/
 *.dis
 *.hex
 .DS_Store
+*.wav
+*.GRP
+*.grp
