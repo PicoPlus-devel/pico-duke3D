@@ -140,11 +140,127 @@ static void __not_in_flash_func(push_division_to_sink)(const uint8_t *div, sink_
 // cross-core spinlock below, taken per mixed division so core0 never waits
 // more than ~100 us.
 // ---------------------------------------------------------------------------
+// How much queued audio the pump aims to keep in the active sink (~43 ms).
+// The rings are larger (64 ms DI / 85 ms I2S) so pushes never drop.
+#define PUMP_TARGET_I2S_QUEUED   2048   // samples of the 4096-sample I2S ring
+#define PUMP_TARGET_DI_LEVEL      512   // islands of the 768-island HDMI ring
+
 static volatile bool s_pumping = false;   // pump body active (for teardown sync)
 
-static void __not_in_flash_func(pump_once)(void)
+// Serializes the two pumpers (core1 background task + core0 safety net) so
+// divisions are mixed and pushed in order. Deliberately SEPARATE from the
+// audiolib critical-section lock: core0's frequent FX_*/MV_* calls take only
+// that one, so they never wait behind a sink push (the HDMI path BCH/TERC4
+// encodes 16 data islands per division — holding the audiolib lock across that
+// blocked the game loop and cost most of the frame rate). Lock order is always
+// pump lock -> audiolib lock, never the reverse, so there is no deadlock.
+static spin_lock_t *s_pump_lock;
+static uint32_t s_starve_count;           // pump arrived with the sink near-empty
+
+// Production-rate instrumentation. The whole in-level audio hunt kept stalling
+// on not knowing WHICH of two very different failures we had: core1 unable to
+// mix fast enough, or core1 mixing fine but hardly ever being called. These
+// separate them directly.
+//   bg = duke_audio_core1_task() entries/s. The driver calls it from core1's
+//        tight loop, so this should be in the thousands. If it is tens, each
+//        pump_once() is taking milliseconds and the loop is the problem.
+//   dv = divisions actually mixed/s. This is the production rate, and it has a
+//        known required value: 48000 / frames_per_div (= 750/s at 64 frames).
+//        Below that, the sink MUST drain no matter how big the ring is.
+static uint32_t s_bg_calls, s_divs_mixed;
+
+// Per-stage timing, in microseconds accumulated per report interval. dv=122/s
+// against need=187/s means one 256-frame division costs ~8 ms to produce
+// in-level, versus comfortably under 5 ms in the menu. These four counters
+// partition that 8 ms so the next change targets the actual consumer:
+//   lock  = core1 blocked acquiring the audiolib spinlock, i.e. core0 holding
+//           it across FX_*/MV_* calls (suspicion: an uncached sound lump being
+//           pulled off SD through cache1d while the lock is held).
+//   svc   = MV_ServiceVoc: mixing all active SFX voices. In-level there are
+//           many voices and every voice's VOC data lives in PSRAM, read through
+//           the XIP cache core0 is thrashing with texture fetches.
+//   music = duke_music_mix: OPL render + 49716->48000 resample.
+//   push  = push_division_to_sink: BCH/TERC4 encode of 64 data islands.
+static uint32_t s_us_lock, s_us_svc, s_us_music, s_us_push;
+
+// Timing the stages costs six time_us_32() reads per division (~1100/s), which
+// is immaterial, but it is pure diagnostics — compile it out of the ship build.
+#if DUKE_VIDEO_DIAG
+#define STAGE_T(v)          uint32_t v = time_us_32()
+#define STAGE_ADD(acc,b,a)  (acc) += (b) - (a)
+#else
+#define STAGE_T(v)          ((void)0)
+#define STAGE_ADD(acc,b,a)  ((void)0)
+#endif
+
+void duke_audio_take_rate_stats(uint32_t *bg, uint32_t *dv, uint32_t *fpd)
+{
+    *bg = s_bg_calls;    s_bg_calls = 0;
+    *dv = s_divs_mixed;  s_divs_mixed = 0;
+    *fpd = (uint32_t)(s_divsize / 4);
+}
+
+// Returns per-stage microseconds since the last call (read-and-clear).
+void duke_audio_take_stage_us(uint32_t *lock, uint32_t *svc, uint32_t *music, uint32_t *push)
+{
+    *lock  = s_us_lock;  s_us_lock  = 0;
+    *svc   = s_us_svc;   s_us_svc   = 0;
+    *music = s_us_music; s_us_music = 0;
+    *push  = s_us_push;  s_us_push  = 0;
+}
+
+// Read-and-clear (called ~1 Hz from core0's idle hook).
+uint32_t duke_audio_take_starve_count(void)
+{
+    uint32_t c = s_starve_count;
+    s_starve_count = 0;
+    return c;
+}
+
+// ---------------------------------------------------------------------------
+// Deferred sound-completion callbacks.
+//
+// multivoc invokes the game's FX callback (Duke's TestCallBack) when a voice
+// finishes, and that callback WRITES game state (sprite[], sector[],
+// hittype[], SoundOwner[]). The mixer runs from the pump on either core and
+// from inside the engine's level-load/art-cache loops, where those arrays are
+// mid-update — calling it there indexes them with garbage and corrupts PSRAM.
+// So multivoc queues here instead (see MV_INVOKE_CALLBACK in multivoc.c) and
+// duke_audio_run_deferred_callbacks() dispatches from a frame boundary on
+// core0. Mirrors frank-duke3d's process_pending_callbacks() design.
+// ---------------------------------------------------------------------------
+#define CB_QUEUE_SIZE 64
+typedef struct { void (*fn)(unsigned long); unsigned long val; } cb_entry_t;
+static cb_entry_t s_cbq[CB_QUEUE_SIZE];
+static volatile uint32_t s_cbq_head, s_cbq_tail;
+static uint32_t s_cbq_dropped;
+
+void duke_audio_defer_callback(void (*fn)(unsigned long), unsigned long val)
+{
+    if (!fn) return;
+    uint32_t next = (s_cbq_head + 1) % CB_QUEUE_SIZE;
+    if (next == s_cbq_tail) { s_cbq_dropped++; return; }   // full: drop
+    s_cbq[s_cbq_head].fn = fn;
+    s_cbq[s_cbq_head].val = val;
+    s_cbq_head = next;
+}
+
+// Call ONLY from core0 with the engine in a consistent state (frame boundary).
+void duke_audio_run_deferred_callbacks(void)
+{
+    while (s_cbq_tail != s_cbq_head) {
+        cb_entry_t e = s_cbq[s_cbq_tail];
+        s_cbq_tail = (s_cbq_tail + 1) % CB_QUEUE_SIZE;
+        if (e.fn) e.fn(e.val);
+    }
+}
+
+static void __not_in_flash_func(pump_once)(int max_divisions)
 {
     if (!s_playing) return;
+
+    if (!s_pump_lock) s_pump_lock = spin_lock_init(spin_lock_claim_unused(true));
+    spin_lock_unsafe_blocking(s_pump_lock);
 
     const sink_t sink = s_sink;
     const int frames_per_div = s_divsize / 4;   // S16 stereo (worst case)
@@ -156,9 +272,20 @@ static void __not_in_flash_func(pump_once)(void)
     // audible crackle even at 60 fps). The 43 ms target keeps latency
     // moderate while bridging frame gaps; the rings are larger (64/85 ms) so
     // pushes never drop.
-    #define PUMP_TARGET_I2S_QUEUED   2048   // samples (~43 ms of 4096 ring)
-    #define PUMP_TARGET_DI_LEVEL      512   // islands (~43 ms of 768 ring)
-    for (int guard = 0; guard < 64; guard++) {
+    // Starvation detector: if the active sink has fallen to a small fraction of
+    // its target when we arrive, the pump is not keeping up — that is audible as
+    // music running slow/gappy and chopped SFX. Counted, not fixed, here: the
+    // 1 Hz report in duke_pico_idle tells us whether a "still sounds wrong"
+    // complaint is CPU starvation or something else entirely.
+    if (sink == SINK_HEADPHONES) {
+        if (s_i2s_ok &&
+            (I2S_AUDIO_RING_SIZE - audio_i2s_get_freebuffer_size()) < (PUMP_TARGET_I2S_QUEUED / 4))
+            s_starve_count++;
+    } else if (hstx_di_queue_get_level() < (PUMP_TARGET_DI_LEVEL / 4)) {
+        s_starve_count++;
+    }
+
+    for (int guard = 0; guard < max_divisions; guard++) {
         if (sink == SINK_HEADPHONES) {
             if (!s_i2s_ok) break;
             int queued = I2S_AUDIO_RING_SIZE - audio_i2s_get_freebuffer_size();
@@ -169,16 +296,32 @@ static void __not_in_flash_func(pump_once)(void)
             if (hstx_di_queue_get_level() >= PUMP_TARGET_DI_LEVEL)
                 break;
         }
-        // Mix one division + advance the MIDI sequencer under the audio lock
-        // (excludes core0's FX_Play/MUSIC_* mutations); push it lock-free.
+        // Mix under the AUDIOLIB lock (shared with core0's FX_*/MV_* calls) —
+        // keep this section as short as possible.
+        s_divs_mixed++;
+        STAGE_T(t0);
         uint32_t lk = DisableInterrupts();
+        STAGE_T(t1);
         s_callback();   // MV_ServiceVoc: mixes next division, advances MV_MixPage
+        STAGE_T(t2);
+        uint8_t *div = (uint8_t *)&s_buffer[MV_MixPage * s_divsize];
         if ((s_mixmode & (STEREO | SIXTEEN_BIT)) == (STEREO | SIXTEEN_BIT)) {
             extern void duke_music_mix(int16_t *stereo, int frames);
-            duke_music_mix((int16_t *)&s_buffer[MV_MixPage * s_divsize], frames_per_div);
+            duke_music_mix((int16_t *)div, frames_per_div);
         }
+        STAGE_T(t3);
         RestoreInterrupts(lk);
-        push_division_to_sink((const uint8_t *)&s_buffer[MV_MixPage * s_divsize], sink);
+        STAGE_ADD(s_us_lock,  t1, t0);
+        STAGE_ADD(s_us_svc,   t2, t1);
+        STAGE_ADD(s_us_music, t3, t2);
+
+        // Push OUTSIDE the audiolib lock. The pump lock still guarantees only
+        // one pumper is here, so the sink helpers' static state is safe.
+        STAGE_T(t4);
+        push_division_to_sink(div, sink);
+#if DUKE_VIDEO_DIAG
+        s_us_push += time_us_32() - t4;
+#endif
     }
 
     // Keep the I2S clock chain alive with silence while HDMI is active.
@@ -186,6 +329,8 @@ static void __not_in_flash_func(pump_once)(void)
         int free = audio_i2s_get_freebuffer_size();
         while (free-- > 0) audio_i2s_enqueue_sample(0);
     }
+
+    spin_unlock_unsafe(s_pump_lock);
 }
 
 // core1 background task (registered via video_output_set_background_task in
@@ -193,14 +338,36 @@ static void __not_in_flash_func(pump_once)(void)
 void __not_in_flash_func(duke_audio_core1_task)(void)
 {
     if (!s_playing) return;
+    s_bg_calls++;
     s_pumping = true;
-    pump_once();
+    pump_once(64);          // core1: fill to target
     s_pumping = false;
 }
 
-// Legacy frame-context entry — now a no-op (core1 owns the pump); kept so
-// existing call sites need no change.
-void duke_audio_pump(void) { }
+// core0 entry, called from the engine's faketimerhandler/idle hook (which fires
+// from all over the render loops, not just once per frame).
+//
+// The pump is fed from BOTH cores on purpose. Core1 alone is not enough: it
+// also services the HSTX scanline ISR, and while core0 streams tiles from
+// PSRAM the shared QMI bus stalls core1's code fetches — starving the pump,
+// which in this design makes music play SLOW (the MIDI clock advances with
+// rendered samples) and chops SFX in the same stream. Whichever core has slack
+// fills the rings; the queue targets make the other one early-out cheaply.
+// Both paths hold the recursive cross-core audiolib spinlock while mixing.
+void duke_audio_pump(void)
+{
+    // DELIBERATELY A NO-OP.
+    //
+    // core1's background task runs in a tight loop and keeps the sink at its
+    // target on its own — measured on hardware: di_lvl 500-535 against a target
+    // of 512, with the underrun counter frozen. So mixing here bought nothing
+    // and cost everything: this hook is called from the engine's render INNER
+    // LOOPS, and in-level the game frame rate collapsed to 4-15/s with it
+    // enabled (the menu, which barely calls this, stayed at ~50/s).
+    //
+    // Kept as a symbol so the existing call sites (faketimerhandler ->
+    // duke_pico_idle, sampletimer) need no edits, and so this note survives.
+}
 
 // ---------------------------------------------------------------------------
 // Headphone jack — poll from frame context (I2C traffic; NOT the pump IRQ).

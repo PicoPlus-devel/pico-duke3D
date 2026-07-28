@@ -120,7 +120,7 @@ static int MV_FooMemory;
 static int   MV_BufferDescriptor;
 static int   MV_BufferEmpty[ NumberOfBuffers ];
 char *MV_MixBuffer[ NumberOfBuffers + 1 ];
-double *MV_FooBuffer = NULL;
+mixsample_t *MV_FooBuffer = NULL;
 
 static VoiceNode *MV_Voices = NULL;
 
@@ -131,6 +131,21 @@ static volatile VoiceNode VoicePool;
 static int MV_VoiceHandle  = MV_MinVoiceHandle;
 
 static void ( *MV_CallBackFunc )( unsigned long ) = NULL;
+
+#ifdef PLATFORM_PICO
+// Bare-metal port: the game's FX callback (Duke's TestCallBack) MUTATES game
+// state — sprite[], sector[], hittype[], SoundOwner[]. The mixer runs from the
+// audio pump on either core and from deep inside the engine's level-load /
+// art-cache loops, where those arrays are half-initialised; calling it there
+// indexes them with garbage and scribbles over PSRAM (which is also where the
+// GRP index lives, so the next art lookup fails). Queue the callback instead
+// and let the platform layer dispatch it at a frame boundary — the same
+// deferred-callback design the known-good frank-duke3d port uses.
+extern void duke_audio_defer_callback(void (*fn)(unsigned long), unsigned long val);
+#define MV_INVOKE_CALLBACK(val)  duke_audio_defer_callback(MV_CallBackFunc, (val))
+#else
+#define MV_INVOKE_CALLBACK(val)  MV_CallBackFunc(val)
+#endif
 static void ( *MV_RecordFunc )( char *ptr, int length ) = NULL;
 static void ( *MV_MixFunction )( VoiceNode *voice);
 
@@ -459,7 +474,7 @@ void MV_ServiceVoc
 	}
 	
 	{
-		ClearBuffer_DW( MV_FooBuffer, 0, sizeof(double) / 4 * MV_BufferSize / MV_SampleSize * MV_Channels);
+		ClearBuffer_DW( MV_FooBuffer, 0, sizeof(mixsample_t) / 4 * MV_BufferSize / MV_SampleSize * MV_Channels);
 		MV_BufferEmpty[ MV_MixPage ] = TRUE;
 	}
 	
@@ -495,7 +510,7 @@ void MV_ServiceVoc
 			
 			if ( MV_CallBackFunc )
             {
-				MV_CallBackFunc( voice->callbackval );
+				MV_INVOKE_CALLBACK( voice->callbackval );
             }
 		}
 	}
@@ -1091,7 +1106,7 @@ int MV_Kill
 
    if ( MV_CallBackFunc )
       {
-      MV_CallBackFunc( callbackval );
+      MV_INVOKE_CALLBACK( callbackval );
       }
 
    return( MV_Ok );
@@ -1931,7 +1946,7 @@ void MV_StopPlayback
 
       if ( MV_CallBackFunc )
          {
-         MV_CallBackFunc( voice->callbackval );
+         MV_INVOKE_CALLBACK( voice->callbackval );
          }
       }
 
@@ -3109,7 +3124,7 @@ int MV_Init
    MV_SetVolume( MV_MaxTotalVolume );
 
 
-   MV_FooMemory = sizeof(double) * MixBufferSize * numchannels + 1024;
+   MV_FooMemory = sizeof(mixsample_t) * MixBufferSize * numchannels + 1024;
    status = USRHOOKS_GetMem( ( void ** )&ptr, MV_FooMemory);
    if ( status != USRHOOKS_Ok )
    {

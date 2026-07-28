@@ -43,7 +43,6 @@ add_executable(duke3d_game
     duke_audio.c
     duke_music.c
     ${CMAKE_SOURCE_DIR}/3rdparty/emu8950/emu8950.c
-    ${CMAKE_SOURCE_DIR}/3rdparty/emu8950/slot_render.cpp
     duke_platform_stub.c
     duke_net_stub.c
 )
@@ -56,35 +55,59 @@ target_include_directories(duke3d_game PRIVATE
     ${CMAKE_SOURCE_DIR}/3rdparty/emu8950
 )
 
-# emu8950 (whole file is gated on USE_EMU8950_OPL): doom's LINEAR C renderer
-# (slot_render.cpp) — the config rp2350-doom shipped as "EMU8950_ASM=0". The
-# unoptimized reference path proved far too slow on core0 (starved the frame
-# loop: no music output, input polling dead). NOT EMU8950_ASM: that variant
-# has a known RP2350 state-corruption bug (doom memory). NO_RATECONV per doom
-# precedent: renders at the OPL's native 49716 Hz; at 48 kHz playback music is
-# ~3.45% flat, inaudible.
+# emu8950 (whole file is gated on USE_EMU8950_OPL). See the per-define notes
+# below for why this is the LINEAR/slot-render path rather than the plain
+# reference C renderer. Its hot functions are also forced SRAM-resident (see the
+# __not_in_flash_func patch in 3rdparty/emu8950/emu8950.c — the lookup tables are
+# non-const and were already in RAM), because executing per-sample audio code
+# from flash makes core1 fetch over XIP while core0 streams textures through the
+# same QMI bus.
+#
+# NOT EMU8950_ASM: that variant has a known RP2350 state-corruption bug.
+# (LINEAR without SLOT_RENDER does not build upstream — `hack_ch` debug cruft
+# escapes its `#if DUMPO` guard in the non-slot-render linear code.)
+# Renderer choice. "reference" is the plain C renderer: it is what Frank signed
+# off as sounding right, and it is bit-identical to the host harness and to the
+# known-good rh1tech/frank-duke3d port. "linear" is Graham Sanderson's RP2-tuned
+# batch path (silent-slot skipping, end-of-note early-out, RP2350 interpolator) --
+# roughly half the cost, but never quality-validated on device, and it is the one
+# piece of the chain host forensics cannot check (host builds compile
+# slot_render's !PICO_ON_DEVICE C fallbacks).
+#
+# Default is "reference" deliberately: the in-level audio starvation that tempted
+# us to trade sound quality for cycles turned out NOT to be a cycle shortage at
+# all -- core1's audio code and data were living in flash/PSRAM behind the QMI bus
+# that core0 saturates while streaming textures. See cmake/psram_linker.cmake.
+# Keep "linear" as the fallback for a genuine cycle shortage only.
+set(DUKE_OPL_RENDERER "reference" CACHE STRING "OPL renderer: reference | linear")
+
 target_compile_definitions(duke3d_game PRIVATE
     USE_EMU8950_OPL=1
-    EMU8950_LINEAR=1
-    EMU8950_LINEAR_SKIP=1
-    EMU8950_LINEAR_END_OF_NOTE_OPTIMIZATION
-    # slot_render.cpp is the C implementation of the slot-render path (the
-    # EMU8950_ASM .S variant is the one with the RP2350 corruption bug).
-    EMU8950_SLOT_RENDER=1
-    EMU8950_NO_PERCUSSION_MODE=1
-    EMU8950_NO_WAVE_TABLE_MAP=1
-    EMU8950_NO_TLL=1
-    EMU8950_NO_FLOAT=1
-    EMU8950_NO_RATECONV=1
+    EMU8950_NO_RATECONV=1     # chip always emits native 49716 Hz; duke_music.c
+                              # resamples to the HDMI-locked 48 kHz sink
     EMU8950_NO_TIMER=1
     EMU8950_NO_TEST_FLAG=1
+    EMU8950_NO_TLL=1          # saves a 128 KB SRAM table
 )
 
+if (DUKE_OPL_RENDERER STREQUAL "linear")
+    target_sources(duke3d_game PRIVATE ${CMAKE_SOURCE_DIR}/3rdparty/emu8950/slot_render.cpp)
+    target_link_libraries(duke3d_game PRIVATE hardware_interp)
+    target_compile_definitions(duke3d_game PRIVATE
+        EMU8950_LINEAR=1 EMU8950_LINEAR_SKIP=1
+        EMU8950_LINEAR_END_OF_NOTE_OPTIMIZATION
+        EMU8950_SLOT_RENDER=1
+        EMU8950_NO_PERCUSSION_MODE=1 EMU8950_NO_WAVE_TABLE_MAP=1 EMU8950_NO_FLOAT=1
+    )
+    set_source_files_properties(${CMAKE_SOURCE_DIR}/3rdparty/emu8950/slot_render.cpp
+        PROPERTIES COMPILE_OPTIONS "-fms-extensions")
+endif()
+message(STATUS "Duke3D OPL renderer: ${DUKE_OPL_RENDERER}")
+
 # emu8950 embeds OPL_SLOT_RENDER as an unnamed struct member (Microsoft
-# anonymous-tag extension) — same flag fruitjam-doom's opl CMake uses.
+# anonymous-tag extension).
 set_source_files_properties(
     ${CMAKE_SOURCE_DIR}/3rdparty/emu8950/emu8950.c
-    ${CMAKE_SOURCE_DIR}/3rdparty/emu8950/slot_render.cpp
     duke_music.c
     PROPERTIES COMPILE_OPTIONS "-fms-extensions"
 )
@@ -108,7 +131,6 @@ target_link_libraries(duke3d_game PRIVATE
     pico_shared_usb_hid
     tinyusb_host
     tinyusb_pico_pio_usb
-    hardware_interp        # emu8950 slot_render.cpp drives the RP2 interpolator
 )
 
 pico_enable_stdio_uart(duke3d_game 1)
@@ -118,15 +140,31 @@ pico_enable_stdio_usb(duke3d_game 0)
 # must merge with libduke's (compiled -fcommon) rather than multiply-define.
 target_compile_options(duke3d_game PRIVATE -fcommon)
 
-# Video diagnostics (off by default; the signal-loss hunt is over). Reenable
-# with -DDUKE_VIDEO_DIAG=1: turns on pico_hdmi's HSTX_DEBUG 1 Hz core1 dump
-# and the core0 "vid:" status line in pico_display.c.
+# Video diagnostics, off by default. -DDUKE_VIDEO_DIAG=1 enables ONLY the core0
+# "vid:" one-liner in pico_display.c (gf/ic/vf/rs/di/du) — that is on core0, so
+# it cannot disturb the audio pump.
 if (DUKE_VIDEO_DIAG)
-    target_compile_definitions(duke3d_game PRIVATE HSTX_DEBUG=1 DUKE_VIDEO_DIAG=1)
+    target_compile_definitions(duke3d_game PRIVATE DUKE_VIDEO_DIAG=1)
 endif()
 
-# (The audio pump now runs as core1's video background task — the frame-paced
-# and timer-IRQ pump variants are gone; see duke_audio.c.)
+# pico_hdmi's own 1 Hz core1 dump is now a SEPARATE, deliberately awkward opt-in,
+# because it CORRUPTS THE THING WE USE IT TO MEASURE. It runs on core1, in the
+# same loop that pumps audio, and costs ~33 ms of wall time per burst: three
+# printfs (~360 chars, and SDK UART stdio BUSY-WAITS, so at 115200 baud that
+# alone is ~31 ms) plus two blocking frequency_count_khz() calls. The HDMI data
+# island ring only holds 64 ms of audio (43 ms pump target), so one burst drains
+# three quarters of the buffer and the sink underruns while core1 catches up.
+# That produced exactly the in-level "di=46..108 with du climbing" symptom that
+# looked like a CPU shortage. Everything it reported that we still care about
+# (di level, underrun count, resync count) is in the core0 line above.
+# Only enable it to debug an actual HSTX wedge, and never to judge audio.
+if (DUKE_HSTX_DEBUG)
+    target_compile_definitions(duke3d_game PRIVATE HSTX_DEBUG=1)
+endif()
+
+# (The audio pump runs ONLY as core1's video background task. Pumping from
+# core0's idle hook as well was measured to collapse the in-level frame rate
+# from ~30 to 4-15 fps for no benefit — see duke_audio.c's duke_audio_pump.)
 
 duke_use_psram_linker_script(duke3d_game)
 

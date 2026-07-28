@@ -14,6 +14,19 @@
 #include <string.h>
 #include <assert.h>
 
+// pico-duke3D: pull in __not_in_flash_func EARLY so the reference-path render
+// functions below (update_output / OPL_calc_buffer_stereo, both far above the
+// existing hardware/gpio.h include) can be placed in SRAM. Executing them from
+// flash means core1 fetches per-sample code over XIP while core0 streams the
+// GRP/PSRAM through the same QMI bus; the resulting stalls starve the audio
+// pump. The lookup tables here are non-const, so they already live in RAM.
+#if PICO_ON_DEVICE
+#include "pico.h"
+#endif
+#ifndef __not_in_flash_func
+#define __not_in_flash_func(x) x
+#endif
+
 #define SAMPLE_BUF_SIZE 1024
 
 #ifndef INLINE
@@ -1115,7 +1128,7 @@ static void update_timer(OPL *opl) {
 #endif
 
 #if !EMU8950_LINEAR
-static void update_output(OPL *opl) {
+static void __not_in_flash_func(update_output)(OPL *opl) {
     int16_t *out;
     int i;
 
@@ -1851,7 +1864,7 @@ void OPL_calc_buffer_linear(OPL *opl, int32_t *buffer, uint32_t nsamples) {
 }
 #endif
 
-void OPL_calc_buffer_stereo(OPL *opl, int32_t *buffer, uint32_t nsamples) {
+void __not_in_flash_func(OPL_calc_buffer_stereo)(OPL *opl, int32_t *buffer, uint32_t nsamples) {
     assert(opl->out_step == opl->inp_step);
 #if DUMPO
     bc++;

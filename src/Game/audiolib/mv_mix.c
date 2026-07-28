@@ -369,19 +369,23 @@ void MV_MixFPMono8( uint32_t position,
    uint32_t rate, const char *start, uint32_t length )
 {
 	const unsigned char *src;
-	double *dest;
+	mixsample_t *dest;
 	unsigned int i;
 
 	src = (const unsigned char *)start;
-	dest = (double *)MV_MixDestination;
+	dest = (mixsample_t *)MV_MixDestination;
+
+	// Loop-invariant: MV_{Left,Right}Volume and MV_MaxVolume are set per voice
+	// before MV_MixFunction() is entered, so the two per-sample divisions the
+	// original did (by MV_MaxVolume, then by 0x8000) collapse into one hoisted
+	// reciprocal. Arithmetic is unchanged: s * vol / (MV_MaxVolume * 0x8000).
+	const float mv_scale = 1.0f / ((float)MV_MaxVolume * 32768.0f);
+	const float lvol = (float)MV_LeftVolume * mv_scale;
 
 	for (i = 0; i < length; i++) {
 		int s = MV_cubic8to16(src, position, rate);
-		double out;
-		
-		out = (double)s * (double)MV_LeftVolume / (double)MV_MaxVolume;
-		out = out / ((double)0x8000);
-		*dest += out;
+
+		*dest += (float)s * lvol;
 
 		position += rate;
 		dest += MV_Channels;
@@ -395,22 +399,25 @@ void MV_MixFPStereo8( uint32_t position,
    uint32_t rate, const char *start, uint32_t length )
 {
 	const unsigned char *src;
-	double *dest;
+	mixsample_t *dest;
 	unsigned int i;
 	
 	src = (const unsigned char *)start;
-	dest = (double *)MV_MixDestination;
+	dest = (mixsample_t *)MV_MixDestination;
+
+	// Loop-invariant: MV_{Left,Right}Volume and MV_MaxVolume are set per voice
+	// before MV_MixFunction() is entered, so the two per-sample divisions the
+	// original did (by MV_MaxVolume, then by 0x8000) collapse into one hoisted
+	// reciprocal. Arithmetic is unchanged: s * vol / (MV_MaxVolume * 0x8000).
+	const float mv_scale = 1.0f / ((float)MV_MaxVolume * 32768.0f);
+	const float lvol = (float)MV_LeftVolume  * mv_scale;
+	const float rvol = (float)MV_RightVolume * mv_scale;
 
 	for (i = 0; i < length; i++) {
 		int s = MV_cubic8to16(src, position, rate);
-		double left, right;
-		
-		left = (double)MV_LeftVolume * (double)s / (double)MV_MaxVolume;
-		left = left / ((double)0x8000);
-		right = (double)(MV_RightVolume * s) / MV_MaxVolume;
-		right = right / ((double)0x8000);
-		dest[0] += left;
-		dest[1] += right;
+
+		dest[0] += (float)s * lvol;
+		dest[1] += (float)s * rvol;
 
 		position += rate;
 		dest += MV_Channels;
@@ -418,26 +425,29 @@ void MV_MixFPStereo8( uint32_t position,
 	
 	MV_MixPosition = position;
 	MV_MixDestination = (char *)dest;
-
 }
 
 void MV_MixFPMono16( uint32_t position,
    uint32_t rate, const char *start, uint32_t length )
 {
 	const short *src;
-	double *dest;
+	mixsample_t *dest;
 	unsigned int i;
 
 	src = (const short *)start;
-	dest = (double *)MV_MixDestination;
+	dest = (mixsample_t *)MV_MixDestination;
+
+	// Loop-invariant: MV_{Left,Right}Volume and MV_MaxVolume are set per voice
+	// before MV_MixFunction() is entered, so the two per-sample divisions the
+	// original did (by MV_MaxVolume, then by 0x8000) collapse into one hoisted
+	// reciprocal. Arithmetic is unchanged: s * vol / (MV_MaxVolume * 0x8000).
+	const float mv_scale = 1.0f / ((float)MV_MaxVolume * 32768.0f);
+	const float lvol = (float)MV_LeftVolume * mv_scale;
 
 	for (i = 0; i < length; i++) {
 		int s = MV_cubic16(src, position, rate);
-		double out;
-		
-		out = (double)s * (double)MV_LeftVolume / (double)MV_MaxVolume;
-		out = out / ((double)0x8000);
-		*dest += out;
+
+		*dest += (float)s * lvol;
 
 		position += rate;
 		dest += MV_Channels;
@@ -451,22 +461,25 @@ void MV_MixFPStereo16( uint32_t position,
    uint32_t rate, const char *start, uint32_t length )
 {
 	const short *src;
-	double *dest;
+	mixsample_t *dest;
 	unsigned int i;
 	
 	src = (const short *)start;
-	dest = (double *)MV_MixDestination;
+	dest = (mixsample_t *)MV_MixDestination;
+
+	// Loop-invariant: MV_{Left,Right}Volume and MV_MaxVolume are set per voice
+	// before MV_MixFunction() is entered, so the two per-sample divisions the
+	// original did (by MV_MaxVolume, then by 0x8000) collapse into one hoisted
+	// reciprocal. Arithmetic is unchanged: s * vol / (MV_MaxVolume * 0x8000).
+	const float mv_scale = 1.0f / ((float)MV_MaxVolume * 32768.0f);
+	const float lvol = (float)MV_LeftVolume  * mv_scale;
+	const float rvol = (float)MV_RightVolume * mv_scale;
 
 	for (i = 0; i < length; i++) {
 		int s = MV_cubic16(src, position, rate);
-		double left, right;
-		
-		left = (double)MV_LeftVolume * (double)s / (double)MV_MaxVolume;
-		left = left / ((double)0x8000);
-		right = (double)(MV_RightVolume * s) / MV_MaxVolume;
-		right = right / ((double)0x8000);
-		dest[0] += left;
-		dest[1] += right;
+
+		dest[0] += (float)s * lvol;
+		dest[1] += (float)s * rvol;
 
 		position += rate;
 		dest += MV_Channels;
@@ -474,5 +487,4 @@ void MV_MixFPStereo16( uint32_t position,
 	
 	MV_MixPosition = position;
 	MV_MixDestination = (char *)dest;
-
 }

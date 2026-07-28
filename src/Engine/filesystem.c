@@ -267,12 +267,19 @@ typedef struct openFile_s{
 static openFile_t openFiles[MAXOPENFILES];
 
 int32_t kopen4load(const char  *filename, int openOnlyFromGRP){
-    
+
 	int32_t     i, k;
     int32_t     newhandle;
 
     grpArchive_t* archive;
-    
+
+#ifdef PLATFORM_PICO
+    // The game probes for optional files with an empty name every frame. Bail
+    // out before attempting an SD open and scanning all GRP entries for it.
+    if (filename == NULL || filename[0] == '\0')
+        return(-1);
+#endif
+
     //Search a free slot
 	newhandle = MAXOPENFILES-1;
 	while (openFiles[newhandle].used && newhandle >= 0)
@@ -314,9 +321,21 @@ int32_t kopen4load(const char  *filename, int openOnlyFromGRP){
             }
         }
 	}
-    
+
+#if defined(PLATFORM_PICO) && defined(DUKE_FS_DIAG)
+    // Enable with -DDUKE_FS_DIAG=1 to see why a lookup missed (is the GRP index
+    // intact?). OFF by default: the game probes for optional files every frame,
+    // and a printf per miss costs ~6 ms of blocking UART at 115200 — enough to
+    // wreck the frame rate on its own.
+    printf("kopen4load MISS '%s' (onlyGRP=%d archives=%d files=%d first='%.12s')\n",
+           filename, openOnlyFromGRP, grpSet.num,
+           grpSet.num > 0 ? grpSet.archives[0].numFiles : -1,
+           (grpSet.num > 0 && grpSet.archives[0].numFiles > 0)
+               ? (char *)grpSet.archives[0].gfilelist[0] : "-");
+#endif
+
 	return(-1);
-    
+
 }
 
 int32_t kread(int32_t handle, void *buffer, int32_t leng){

@@ -31,6 +31,23 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #ifndef __MULTIVOC_H
 #define __MULTIVOC_H
 
+// Type of one sample in the mix accumulator (MV_FooBuffer), which every voice
+// accumulates into and MV_*Downmix then converts to the output division.
+//
+// This was `double`, and on a target with no double-precision FPU that made SFX
+// mixing the single most expensive thing in the audio pipeline: MV_MixFPStereo16
+// compiled to ELEVEN soft-float helper calls per sample (4x __aeabi_i2d,
+// 3x __aeabi_dmul, 2x __aeabi_ddiv, 2x __aeabi_dadd), and __aeabi_ddiv alone is
+// several hundred cycles. Measured on RP2350 at 378 MHz: ~6650 cycles per mixed
+// frame, i.e. 4.5 ms to mix one 256-frame division, which held audio production
+// to 65% of the rate the 48 kHz sink consumes -- so music and speech literally
+// played at 65% speed. float is hardware on this core (VFP, single precision),
+// so this is ~3 instructions per sample instead of a libgcc call chain.
+//
+// Semantically transparent: values here are int16 samples scaled to +/-1.0, and
+// float's 24-bit mantissa covers that exactly.
+typedef float mixsample_t;
+
 //#include <windows.h>
 #include <SDL.h>
 

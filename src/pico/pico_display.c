@@ -48,7 +48,9 @@ static uint8_t  s_fb8[FB_W * FB_H];       // 8bpp — frameplace points here
 static uint16_t s_rgb[FB_W * FB_H];       // RGB555 — scanned out by core1
 static uint16_t s_pal555[256];            // palette lookup (RGB555)
 
-static volatile uint32_t s_frame_counter = 0;
+static volatile uint32_t s_frame_counter = 0;   // HSTX scanout frames (core1)
+static uint32_t s_page_count = 0;               // _nextpage calls = GAME frames
+static uint32_t s_idle_count = 0;               // duke_pico_idle calls (hot hook)
 static uint32_t s_core1_stack[2048] __attribute__((aligned(8)));
 static bool s_video_up = false;
 
@@ -228,14 +230,99 @@ void _idle(void) { }
 // are fine.
 void duke_pico_idle(void)
 {
-    duke_usb_poll();
-    duke_audio_poll_headphone();   // I2C traffic — frame context only
+    // HOT PATH: the engine calls faketimerhandler (and therefore this) from
+    // inside its render inner loops — thousands of times per frame. Everything
+    // here must be a few instructions in the common case. In particular use
+    // time_us_32() (one register read) and NEVER to_ms_since_boot(), which is a
+    // 64-bit read plus a 64-bit divide and cost us most of the frame rate.
+    const uint32_t now_us = time_us_32();
+    s_idle_count++;
+
+    // Cheap: a queue-level check that returns unless core1 has fallen behind.
     duke_audio_pump();
+
+    // Cheap: two volatile reads unless a sound actually finished. Must run at
+    // this frequency — Duke spin-waits on sound completion inside
+    // faketimerhandler (premap.c's level-start speech wait), and those loops
+    // only exit once a queued callback lands.
+    {
+        extern void duke_audio_run_deferred_callbacks(void);
+        duke_audio_run_deferred_callbacks();
+    }
+
+    // USB host + headphone detect are expensive (tuh_task, codec I2C) and do
+    // not need inner-loop rates.
+    {
+        static uint32_t last_io_us;
+        if (now_us - last_io_us >= 2000u) {
+            last_io_us = now_us;
+            duke_usb_poll();
+            duke_audio_poll_headphone();
+        }
+    }
+
+    // 1 Hz audio health report. Diagnostic-build only: in the shipping build the
+    // whole block (and the per-stage timers behind it, see duke_audio.c) compiles
+    // out, so the audio path carries no measurement cost.
+    //
+    //   clip=N     music+SFX sum saturated -> lower DUKE_MUSIC_GAIN_SHIFT.
+    //   starve=N   pump found the sink near-empty.
+    //   dv vs need production rate against what 48 kHz demands. THE number: if
+    //              dv < need the sink drains and, because the MIDI clock and
+    //              voice playback advance with rendered samples, music and
+    //              speech play slow by exactly that ratio.
+    //   bg         core1 pump entries/s. Hundreds of thousands = healthy (it is
+    //              early-outing on a satisfied target). Single digits = each
+    //              call is grinding through its full division guard, which is
+    //              what a production shortfall looks like from the outside.
+    //   di/du      HDMI island queue level (target 512) and underrun count.
+    //              du must stay frozen.
+    // Healthy in-level reference, E1L1 with music (RP2350 @ 378 MHz):
+    //   dv=188 need=187 di~500 du frozen; stage lock=0 svc=27 music=555 push=143.
+#if DUKE_VIDEO_DIAG
+    {
+        extern uint32_t duke_music_take_clip_count(void);
+        extern uint32_t duke_audio_take_starve_count(void);
+        static uint32_t last_report_us;
+        if (now_us - last_report_us >= 1000000u) {
+            last_report_us = now_us;
+            uint32_t clips = duke_music_take_clip_count();
+            uint32_t starve = duke_audio_take_starve_count();
+            // bg/dv/need: see duke_audio_take_rate_stats. dv is the production
+            // rate and "need" is what 48 kHz demands — if dv < need the sink
+            // drains and no amount of ring depth can hide it. bg says whether
+            // core1's tight loop is actually spinning (thousands) or wedged in
+            // long pump calls (tens).
+            extern void duke_audio_take_rate_stats(uint32_t *, uint32_t *, uint32_t *);
+            extern void duke_audio_take_stage_us(uint32_t *, uint32_t *, uint32_t *, uint32_t *);
+            uint32_t bg, dv, fpd, u_lock, u_svc, u_music, u_push;
+            duke_audio_take_rate_stats(&bg, &dv, &fpd);
+            duke_audio_take_stage_us(&u_lock, &u_svc, &u_music, &u_push);
+            printf("audio: clip=%lu starve=%lu bg=%lu/s dv=%lu/s need=%lu/s di=%lu du=%lu\n",
+                   (unsigned long)clips, (unsigned long)starve,
+                   (unsigned long)bg, (unsigned long)dv,
+                   (unsigned long)(fpd ? 48000u / fpd : 0),
+                   (unsigned long)hstx_di_queue_get_level(),
+                   (unsigned long)hstx_di_queue_get_underrun_count());
+            // ms of core1 wall time per second in each pump stage. These four
+            // should sum to well under 1000; whichever dominates is the cause of
+            // the in-level production shortfall.
+            printf("  stage ms/s: lock=%lu svc=%lu music=%lu push=%lu (of 1000)\n",
+                   (unsigned long)(u_lock / 1000), (unsigned long)(u_svc / 1000),
+                   (unsigned long)(u_music / 1000), (unsigned long)(u_push / 1000));
+        }
+    }
+#endif
 }
 
 void _nextpage(void)
 {
+    s_page_count++;   // game-frame counter (see the diag report below)
+
+    // _handle_events -> duke_pico_idle also drains the deferred sound
+    // callbacks, so there is no separate dispatch needed here.
     _handle_events();
+
     if (!s_video_up) return;
 
     // Palette-expand the 8bpp frame into the RGB555 scanout buffer (core0).
@@ -253,18 +340,26 @@ void _nextpage(void)
     // 1 Hz core0-side status (enable with -DDUKE_VIDEO_DIAG=1). If core1
     // dies, "vf" freezes while this keeps printing; if the watchdog is
     // resync-looping, "rs" climbs. "du" = DI underrun (audio pump starved).
-    static uint32_t s_last_report, s_last_vf;
+    static uint32_t s_last_report, s_last_vf, s_last_pages, s_last_idle;
     uint32_t now = to_ms_since_boot(get_absolute_time());
     if (now - s_last_report >= 1000) {
         extern uint32_t hstx_di_queue_get_underrun_count(void);
         extern uint32_t hstx_di_queue_get_level(void);
         extern int get_video_output_resync_count(void);
-        printf("vid: vf=%lu (+%lu/s) rs=%d di=%lu du=%lu\n",
-               (unsigned long)s_frame_counter,
+        // gf = GAME frames/s (_nextpage calls) — the number that matters.
+        // vf = HSTX scanout frames/s, which is always ~60 and says nothing
+        // about how fast the game itself is running.
+        // ic = idle-hook calls/s. This hook runs from the engine's render
+        // inner loops, so its per-call cost is multiplied by this number.
+        printf("vid: gf=%lu/s ic=%lu/s vf=+%lu/s rs=%d di=%lu du=%lu\n",
+               (unsigned long)(s_page_count - s_last_pages),
+               (unsigned long)(s_idle_count - s_last_idle),
                (unsigned long)(s_frame_counter - s_last_vf),
                get_video_output_resync_count(),
                (unsigned long)hstx_di_queue_get_level(),
                (unsigned long)hstx_di_queue_get_underrun_count());
+        s_last_pages = s_page_count;
+        s_last_idle = s_idle_count;
         s_last_vf = s_frame_counter;
         s_last_report = now;
     }
