@@ -1,0 +1,30 @@
+{
+    // Build where the scripts build, not in CMake Tools' own ./build.
+    //
+    // With two trees, F5 flashes whatever CMake Tools last put in ./build while
+    // ./fruitjam-build.sh produces build_fruitjam -- so "the fix is in" and "the
+    // board is running the fix" become different statements. That cost two
+    // debugging rounds: a save-game hardfault looked unfixed because the VSCode
+    // run was an older binary (the giveaway was two hardfault call stacks with
+    // byte-identical addresses across a rebuild).
+    //
+    // One directory for both means F5 and the command line cannot diverge.
+    "cmake.buildDirectory": "${workspaceFolder}/build_fruitjam",
+
+    // Pin the build type too, for the same reason: CMake Tools would otherwise
+    // impose its own variant (Release) on the shared directory and silently
+    // reconfigure it away from what fruitjam-build.sh sets.
+    "cmake.defaultVariants": {
+        "buildType": {
+            "default": "minsizerel",
+            "description": "Matches fruitjam-build.sh",
+            "choices": {
+                "minsizerel": {
+                    "short": "MinSizeRel",
+                    "long": "Optimise for size (what the build scripts use)",
+                    "buildType": "MinSizeRel"
+                }
+            }
+        }
+    }
+}
