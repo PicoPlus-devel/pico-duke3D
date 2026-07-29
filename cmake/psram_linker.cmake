@@ -40,6 +40,75 @@ function(duke_use_psram_linker_script target)
     file(READ "${_src}" _ld)
     string(JOIN " " _audio ${DUKE_AUDIO_PATH_OBJS})
 
+    # 0) Bootloader variant: move FLASH to the pico-bootLoader app partition.
+    #    This lives here, and not in cmake/BootPartition.cmake where the map is
+    #    documented, because pico_set_linker_script can only be honoured once per
+    #    target — a second call replaces the first, silently dropping either the
+    #    relocated FLASH or the PSRAM/.audio_bss/.psram_bss sections below.
+    #    One generator, all patches.
+    if (BUILD_FOR_BOOTLOADER)
+        # Newer SDKs pull FLASH in from a generated pico_flash_region.ld; older
+        # ones spell the region out inline. Handle both (the regex is idempotent
+        # if the INCLUDE replacement already produced the explicit line).
+        string(REPLACE
+            "INCLUDE \"pico_flash_region.ld\""
+            "FLASH(rx) : ORIGIN = ${DUKE_APP_BASE}, LENGTH = ${DUKE_APP_SIZE}"
+            _ld "${_ld}")
+        string(REGEX REPLACE
+            "FLASH\\(rx\\)[ \t]*:[^\n]*"
+            "FLASH(rx) : ORIGIN = ${DUKE_APP_BASE}, LENGTH = ${DUKE_APP_SIZE}"
+            _ld "${_ld}")
+        if (NOT _ld MATCHES "ORIGIN = ${DUKE_APP_BASE}")
+            message(FATAL_ERROR
+                "psram_linker: could not relocate FLASH in ${_src}. Neither the "
+                "pico_flash_region.ld INCLUDE nor an inline FLASH(rx) line was "
+                "found, so the image would silently link at 0x10000000 and the "
+                "bootloader could not launch it.")
+        endif()
+        duke_bootloader_target_props(${target})
+        message(STATUS "BootPartition: ${target} -> FLASH ORIGIN=${DUKE_APP_BASE} LENGTH=${DUKE_APP_SIZE}")
+    endif()
+
+    # 0b) Core0's stack -> main RAM, out of the 4 KB SCRATCH_Y bank.
+    #
+    #  The SDK parks core0's stack at the top of SCRATCH_Y, which caps it at
+    #  4 KB. That is not enough for this engine: BUILD/Duke have ~1.9 KB frames
+    #  (resetpspritevars, tics, enterlevel) and the SDK default is only 2 KB, so
+    #  with the stock layout deep paths ran off the bottom and survived purely
+    #  because the memory under it happened to be unused. Raising
+    #  PICO_STACK_SIZE alone does not fix it either: it sizes BOTH stack
+    #  sections, so 4096 exactly fills SCRATCH_Y *and* SCRATCH_X and then any
+    #  __scratch_x / __scratch_y user fails to link — emu8950's slot_render.cpp
+    #  puts 1 KB in __scratch_y and did exactly that.
+    #
+    #  So move both stack sections into RAM (450 KB of the 512 KB is free) and
+    #  recompute the stack symbols from where they actually landed. That leaves
+    #  both scratch banks entirely free for their intended users. crt0 sets SP
+    #  from __stack == __StackTop, so redirecting these two assignments is what
+    #  actually moves the stack.
+    string(REPLACE
+        "    .stack1_dummy (NOLOAD):\n    {\n        *(.stack1*)\n    } > SCRATCH_X"
+        "    .stack1_dummy (NOLOAD):\n    {\n        *(.stack1*)\n    } > RAM"
+        _ld "${_ld}")
+    string(REPLACE
+        "    .stack_dummy (NOLOAD):\n    {\n        KEEP(*(.stack*))\n    } > SCRATCH_Y"
+        "    .stack_dummy (NOLOAD):\n    {\n        KEEP(*(.stack*))\n    } > RAM"
+        _ld "${_ld}")
+    string(REPLACE
+        "__StackOneTop = ORIGIN(SCRATCH_X) + LENGTH(SCRATCH_X);"
+        "__StackOneTop = ADDR(.stack1_dummy) + SIZEOF(.stack1_dummy);"
+        _ld "${_ld}")
+    string(REPLACE
+        "__StackTop = ORIGIN(SCRATCH_Y) + LENGTH(SCRATCH_Y);"
+        "__StackTop = ADDR(.stack_dummy) + SIZEOF(.stack_dummy);"
+        _ld "${_ld}")
+    if (NOT _ld MATCHES "ADDR\\(\\.stack_dummy\\)")
+        message(FATAL_ERROR
+            "psram_linker: could not relocate the stack out of SCRATCH_Y in "
+            "${_src}. Leaving it there silently caps core0's stack at 4 KB, "
+            "which this engine overruns.")
+    endif()
+
     # 1) Add the PSRAM MEMORY region.
     string(REPLACE
         "RAM(rwx) : ORIGIN =  0x20000000, LENGTH = 512k"

@@ -7677,7 +7677,17 @@ void Logo(void)
 
 void loadtmb(void)
 {
+#ifdef PLATFORM_PICO
+    // 8000 bytes will not fit on core0's stack (PICO_STACK_SIZE, and even the
+    // raised 4 KB is half this). As a local it silently ran ~6 KB past the
+    // stack bottom and only survived because the memory under it happened to be
+    // unallocated. static instead: game.c is part of libduke, so this lands in
+    // PSRAM, and it is touched once at startup. AL_RegisterTimbreBank copies
+    // the bank into ADLIB_TimbreBank, so nothing retains this pointer.
+    static uint8_t tmb[8000];
+#else
     uint8_t  tmb[8000];
+#endif
     int32_t fil, l;
 
     fil = kopen4load("d3dtimbr.tmb",0);

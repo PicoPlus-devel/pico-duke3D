@@ -13,6 +13,7 @@
 #include "hardware/pll.h"
 #include "hardware/vreg.h"
 #include "hardware/uart.h"
+#include "hardware/watchdog.h"
 #include "hardware/structs/qmi.h"
 
 // ---------------------------------------------------------------------------
@@ -68,6 +69,48 @@ static void setup_clocks(void)
     clock_configure(clk_peri, 0,
                     CLOCKS_CLK_PERI_CTRL_AUXSRC_VALUE_CLKSRC_PLL_SYS,
                     378000000u, 378000000u);
+}
+
+// ---------------------------------------------------------------------------
+// Exit path. Duke never returns from Duke3D_main(): quitting runs
+// gameexit() -> Shutdown() -> ShutDown() (which writes the config) ->
+// Error(EXIT_SUCCESS) -> exit(), and the engine's fatal paths (filesystem.c,
+// tiles.c) call exit(0) directly. The SDK's exit() jumps straight to _exit()
+// and deliberately does NOT run atexit handlers ("no desire to pull in
+// __call_exitprocs"), so overriding the SDK's __weak _exit is the only hook
+// that catches every way out.
+//
+// The stock _exit spins on __breakpoint(), i.e. quitting Duke currently wedges
+// the board until a power cycle. Reset instead: the bootrom always runs
+// whatever sits at the start of flash, so a BUILD_FOR_BOOTLOADER image lands
+// back in the pico-bootLoader picker and a standalone image simply restarts
+// Duke. No watchdog scratch handshake is needed for that — the picker is first
+// in flash, so every reset reaches it.
+//
+// Non-zero status (a failed assert or abort()) keeps the stock breakpoint loop
+// on purpose: rebooting would throw away the state right when a debugger wants
+// to inspect it, and hanging there is what those paths already did.
+// ---------------------------------------------------------------------------
+void __attribute__((noreturn)) _exit(int status)
+{
+    if (status == 0) {
+        printf("\nduke3d: exit -> reset%s\n",
+#if BUILD_FOR_BOOTLOADER
+               " (returning to bootloader)"
+#else
+               ""
+#endif
+               );
+        stdio_flush();
+        watchdog_reboot(0, 0, 1);
+    } else {
+        printf("\nduke3d: exit(%d) — halting for the debugger\n", status);
+        stdio_flush();
+    }
+    while (1) {
+        if (status != 0) __breakpoint();
+        tight_loop_contents();
+    }
 }
 
 int main(void)

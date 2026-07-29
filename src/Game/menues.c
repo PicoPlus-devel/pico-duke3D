@@ -217,12 +217,27 @@ int loadpheader(uint8_t  spot,int32 *vn,int32 *ln,int32 *psk,int32 *nump)
 }
 
 
+#ifdef PLATFORM_PICO
+// 20 KB (MAXSCRIPTSIZE) will not fit on the stack here: core0's stack is the
+// 4 KB SCRATCH_Y bank (8 KB counting SCRATCH_X), so as a local this overflowed
+// straight through __StackLimit into the heap on every save/load. Static
+// instead -- menues.c is part of libduke, so this lands in PSRAM (see
+// cmake/psram_linker.cmake), which is free and plenty fast for a buffer only
+// touched while writing or reading a savegame. Save and load never run
+// concurrently (both are driven from the menu on core0), but they keep separate
+// buffers anyway since it costs nothing there.
+#define DUKE_SCRIPTPTRS_STATIC static
+#else
+#define DUKE_SCRIPTPTRS_STATIC
+#endif
+
 int loadplayer(int8_t spot)
 {
      short k,music_changed;
      char  fn[] = "game0.sav";
      char  mpfn[] = "gameA_00.sav";
-     char  *fnptr, scriptptrs[MAXSCRIPTSIZE];
+     char  *fnptr;
+     DUKE_SCRIPTPTRS_STATIC char scriptptrs[MAXSCRIPTSIZE];
      int32_t fil, bv, i, j, x;
      int32 nump;
 
@@ -553,7 +568,8 @@ int saveplayer(int8_t spot)
      int32_t i, j;
      char  fn[] = "game0.sav";
      char  mpfn[] = "gameA_00.sav";
-     char  *fnptr,scriptptrs[MAXSCRIPTSIZE];
+     char  *fnptr;
+     DUKE_SCRIPTPTRS_STATIC char scriptptrs[MAXSCRIPTSIZE];
          FILE *fil;
      int32_t bv = BYTEVERSION;
 	 char  fullpathsavefilename[16];

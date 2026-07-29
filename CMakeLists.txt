@@ -53,6 +53,20 @@ endif()
 include(${PICO_SDK_PATH}/pico_sdk_init.cmake)
 
 project(pico_duke3d C CXX ASM)
+
+# Bootloader variant. ON links duke3d_game into the pico-bootLoader's app
+# partition at 0x10080000 (see cmake/BootPartition.cmake for the flash map)
+# instead of owning flash from 0x10000000, so the picker can launch it and
+# every reset returns to the picker. Use ./fruitjam-build-forbootloader.sh.
+# The relink itself is applied by cmake/psram_linker.cmake, which owns the
+# generated linker script; BUILD_FOR_BOOTLOADER is also visible to C so the
+# platform layer can adapt (e.g. restart() rebooting back into the picker).
+option(BUILD_FOR_BOOTLOADER "Link for the pico-bootLoader app partition" OFF)
+if (BUILD_FOR_BOOTLOADER)
+    add_compile_definitions(BUILD_FOR_BOOTLOADER=1)
+endif()
+include(cmake/BootPartition.cmake)
+
 set(CMAKE_C_STANDARD 11)
 # C++17: the vendored pico_shared usb_hid headers (used from M3) need
 # inline static constexpr; harmless for M0.

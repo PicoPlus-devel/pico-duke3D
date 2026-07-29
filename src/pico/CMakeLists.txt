@@ -55,17 +55,16 @@ target_include_directories(duke3d_game PRIVATE
     ${CMAKE_SOURCE_DIR}/3rdparty/emu8950
 )
 
-# emu8950 (whole file is gated on USE_EMU8950_OPL). See the per-define notes
-# below for why this is the LINEAR/slot-render path rather than the plain
-# reference C renderer. Its hot functions are also forced SRAM-resident (see the
-# __not_in_flash_func patch in 3rdparty/emu8950/emu8950.c — the lookup tables are
-# non-const and were already in RAM), because executing per-sample audio code
-# from flash makes core1 fetch over XIP while core0 streams textures through the
-# same QMI bus.
+# emu8950 (whole file is gated on USE_EMU8950_OPL). Its hot functions are forced
+# SRAM-resident (see the __not_in_flash_func patch in 3rdparty/emu8950/emu8950.c
+# — the lookup tables are non-const and were already in RAM), because executing
+# per-sample audio code from flash makes core1 fetch over XIP while core0 streams
+# textures through the same QMI bus.
 #
 # NOT EMU8950_ASM: that variant has a known RP2350 state-corruption bug.
 # (LINEAR without SLOT_RENDER does not build upstream — `hack_ch` debug cruft
 # escapes its `#if DUMPO` guard in the non-slot-render linear code.)
+#
 # Renderer choice. "reference" is the plain C renderer: it is the one signed off
 # as sounding right on hardware, and it is bit-identical to what the host
 # harness renders, so its output can be checked offline against a WAV.
@@ -136,6 +135,17 @@ target_link_libraries(duke3d_game PRIVATE
 
 pico_enable_stdio_uart(duke3d_game 1)
 pico_enable_stdio_usb(duke3d_game 0)
+
+# Core0 stack. The SDK default is 2 KB, which this engine overruns: BUILD/Duke
+# have deep frames (resetpspritevars ~1.8 KB, tics ~1.5 KB, enterlevel ~1.3 KB)
+# and two functions had multi-kilobyte buffers as locals (loadtmb 8000 B,
+# saveplayer/loadplayer 20 KB each — those are now static, see their comments).
+# cmake/psram_linker.cmake relocates both stack sections out of the 4 KB SCRATCH
+# banks into main RAM, so this is no longer capped at 4 KB and the scratch banks
+# stay free for their intended __scratch_x/__scratch_y users. 16 KB gives ~8x
+# headroom over the largest remaining frame. Note __StackLimit in the map is the
+# HEAP bound, not the stack bottom — the bottom is __StackTop - PICO_STACK_SIZE.
+target_compile_definitions(duke3d_game PRIVATE PICO_STACK_SIZE=16384)
 
 # -fcommon: the sound stubs include duke3d.h, which carries tentative defs that
 # must merge with libduke's (compiled -fcommon) rather than multiply-define.
