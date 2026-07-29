@@ -4,12 +4,7 @@
         {
             "name": "Pico Debug",
             "cwd": "${workspaceRoot}",
-            // Explicit, rather than ${command:cmake.launchTargetPath}: this
-            // project still builds the M0 bring-up target `duke3d` alongside the
-            // game, and that one only shows colour bars -- so if CMake Tools has
-            // it selected as the launch target, F5 flashes a test pattern. The
-            // build directory is pinned in settings.json to match the scripts.
-            "executable": "${workspaceFolder}/build_fruitjam/src/pico/duke3d_game.elf",
+            "executable": "${command:cmake.launchTargetPath}",
             "request": "launch",
             "type": "cortex-debug",
             "servertype": "openocd",
