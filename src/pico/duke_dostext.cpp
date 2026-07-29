@@ -36,11 +36,25 @@
 #define HEADER_ROW  0     // row 0 is the title bar; text scrolls in rows 1..24
 #define FIRST_TEXT_ROW 1
 
-static uint16_t *s_surface;
+static uint16_t *s_surface;          // NULL until the HSTX output is up
 static int       s_stride;
-static bool      s_active;
-static int       s_col, s_row;
+static bool      s_active = true;    // accept text from the very first printf
+static bool      s_cells_ready;
+static int       s_col, s_row = FIRST_TEXT_ROW;
 static char      s_cells[DOSTEXT_ROWS][DOSTEXT_COLS];
+
+// The character grid doubles as the backlog. Text printed before the display
+// exists still lands here (blit_cell simply no-ops without a surface), and
+// duke_dostext_init() then repaints the grid -- so the lines Duke prints before
+// _platform_init runs are not lost. That matters because the most recognisable
+// part of the DOS startup happens there: the "Chocolate DukeNukem3D" banner,
+// the GRP identification, and the engine's group-file messages all precede it.
+// Only the last 24 rows can be shown, which is exactly DOS behaviour: earlier
+// lines scroll off.
+static void ensure_cells(void)
+{
+    if (!s_cells_ready) { memset(s_cells, ' ', sizeof(s_cells)); s_cells_ready = true; }
+}
 
 static void blit_cell(int col, int row, char c, uint16_t fg, uint16_t bg)
 {
@@ -82,11 +96,9 @@ static void repaint_text(void)
 
 void duke_dostext_init(uint16_t *surface, int stride)
 {
+    ensure_cells();          // keep whatever was printed before the display existed
     s_surface = surface;
     s_stride  = stride;
-    s_col = 0;
-    s_row = FIRST_TEXT_ROW;
-    memset(s_cells, ' ', sizeof(s_cells));
     if (s_surface) {
         // Clear the whole surface, including any pixels outside the character
         // grid (there are none at 40x25, but the surface may be larger).
@@ -95,7 +107,7 @@ void duke_dostext_init(uint16_t *surface, int stride)
                 s_surface[y * s_stride + x] = COL_BG;
     }
     draw_header();
-    repaint_text();
+    repaint_text();          // replays the pre-init backlog
     s_active = true;
 }
 
@@ -119,7 +131,8 @@ static void newline(void)
 
 void duke_dostext_write(const char *s, size_t len)
 {
-    if (!s_active || !s_surface) return;
+    if (!s_active) return;   // NOT gated on s_surface: see ensure_cells above
+    ensure_cells();
 
     for (size_t i = 0; i < len; i++) {
         char c = s[i];
