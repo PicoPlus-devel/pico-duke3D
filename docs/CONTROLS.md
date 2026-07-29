@@ -50,22 +50,30 @@ and X is fire from the first frame. **No Y press, no level restart.**
 
 ## USB keyboard
 
-A keyboard works alongside the pad, but translation is currently **partial** —
-only the keys below are recognised. Notably absent: letters other than A/Z,
-digits, and the function keys, so **F6/F9 quicksave/quickload and typing a save
-name are not available from a keyboard yet.** Full HID→scancode translation is
-still to do.
+A keyboard works alongside the pad, and translation is now complete enough to
+type: all letters, digits and punctuation, F1–F12, the keypad, Backspace, Tab,
+Enter, Escape, Space and the arrows. Shift is tracked as a real scancode, so
+`KB_Getch()` picks the shifted ASCII table and capitals work.
 
-| Key | Sends |
-|---|---|
-| Esc | Escape |
-| Enter | Enter |
-| Space | Space |
-| arrows | arrow keys |
-| A | A (jump) |
-| Z | Z (crouch) |
+This was the reason a save slot could not be named: the arrows, Enter and Escape
+were mapped — enough to navigate every menu — but no letter key ever reached the
+game, so `strget()` received nothing to insert. The engine side never needed
+changing; `KB_Startup()` already fills `scancodeToASCII[]` for every letter and
+digit.
 
-## Saving and loading — no keyboard needed
+Two deliberate gaps:
+
+* **Insert / Home / PageUp / Delete / End / PageDown** are omitted. They are
+  extended (`0xE0`-prefixed) on a PC keyboard and Duke reaches them through its
+  own `extscanToSC` table; posting a bare code would mean a different key. The
+  keypad equivalents do work.
+* **Arrows** use Duke's remapped extended codes rather than `0xE0` pairs, since
+  this layer posts single bytes. That is why the arrow and keypad entries in the
+  table differ even though a PC keyboard shares their scancodes.
+
+`F6` quicksave and `F9` quickload now work from the keyboard.
+
+## Saving and loading — a keyboard is optional
 
 Duke's save flow ends in `strget()`, which asks for a save name. That looks like
 it needs a keyboard, but it doesn't: `strget()` returns "accept" as soon as it
@@ -82,11 +90,13 @@ So, with the pad alone:
    `/roms/duke3d/game0.sav`
 
 Loading is the same via *Load Game*. The only thing you give up is a *named*
-save — the slot shows blank. Naming saves needs the keyboard work above.
+save — the slot shows blank. With a keyboard attached you can type a name at
+step 4 instead, then press Enter.
 
-`F6` quicksave and `F9` quickload are handled by the engine, and after one
-ordinary save they skip the name prompt entirely — but neither is mapped to any
-button or key yet, so they are currently unreachable.
+`F6` quicksave and `F9` quickload are handled by the engine and skip the name
+prompt once you have made one ordinary save. They are reachable from a keyboard
+but **not from the pad** — a SNES pad has no spare button, so it would need a
+chord. Say the word if you want one (e.g. SELECT + L / SELECT + R).
 
 ## Where this lives
 
