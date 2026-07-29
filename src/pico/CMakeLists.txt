@@ -66,9 +66,10 @@ target_include_directories(duke3d_game PRIVATE
 # NOT EMU8950_ASM: that variant has a known RP2350 state-corruption bug.
 # (LINEAR without SLOT_RENDER does not build upstream — `hack_ch` debug cruft
 # escapes its `#if DUMPO` guard in the non-slot-render linear code.)
-# Renderer choice. "reference" is the plain C renderer: it is what Frank signed
-# off as sounding right, and it is bit-identical to the host harness and to the
-# known-good rh1tech/frank-duke3d port. "linear" is Graham Sanderson's RP2-tuned
+# Renderer choice. "reference" is the plain C renderer: it is the one signed off
+# as sounding right on hardware, and it is bit-identical to what the host
+# harness renders, so its output can be checked offline against a WAV.
+# "linear" is Graham Sanderson's RP2-tuned
 # batch path (silent-slot skipping, end-of-note early-out, RP2350 interpolator) --
 # roughly half the cost, but never quality-validated on device, and it is the one
 # piece of the chain host forensics cannot check (host builds compile

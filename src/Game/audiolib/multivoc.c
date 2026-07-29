@@ -140,7 +140,7 @@ static void ( *MV_CallBackFunc )( unsigned long ) = NULL;
 // indexes them with garbage and scribbles over PSRAM (which is also where the
 // GRP index lives, so the next art lookup fails). Queue the callback instead
 // and let the platform layer dispatch it at a frame boundary — the same
-// deferred-callback design the known-good frank-duke3d port uses.
+// deferred-callback design.
 extern void duke_audio_defer_callback(void (*fn)(unsigned long), unsigned long val);
 #define MV_INVOKE_CALLBACK(val)  duke_audio_defer_callback(MV_CallBackFunc, (val))
 #else

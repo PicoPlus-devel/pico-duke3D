@@ -180,20 +180,22 @@ static inline int16_t sat16(int32_t v)
 }
 
 // ---------------------------------------------------------------------------
-// Output stage. Arithmetic matches the known-good rh1tech/frank-duke3d port
-// (src/i_music.c MusicGenerator), whose commit history documents each piece:
+// Output stage. Three pieces, none optional — each was missing at some point
+// and each has an audible failure mode:
 //
-//  * one-pole low-pass filter — "The real OPL2 DAC + analog stage naturally
-//    attenuates harsh high-frequency content from high-feedback patches.
-//    Without this, FB=7 instruments sound much harsher in digital emulation
-//    than on real hardware." (their commit c3ddf9f). Duke's bank is full of
-//    those: 37% of D3DTIMBR.TMB's 256 patches use FB>=5, 48 use FB=7.
-//  * <<3 gain — "matches Doom/Heretic OPL output level"; they landed on 8x
-//    after 10x hard-clipped percussion (dc3fc60). We were ~10x quieter.
+//  * one-pole low-pass filter — a real OPL2's DAC and analog output stage roll
+//    off the harsh high-frequency content that high-feedback patches generate,
+//    so without this FB=7 instruments sound far harsher emulated than they do
+//    on hardware. Duke's bank is full of them: of D3DTIMBR.TMB's 256 patches,
+//    37% use FB>=5 and 48 use FB=7.
+//  * <<3 gain — the raw chip output is ~10x quieter than the level the rest of
+//    the mix expects, which reads as thin and distant. 8x and not 16x because
+//    the extra headroom is needed for percussion transients.
 //  * chip-native render rate — with NO_RATECONV the emulator advances one
-//    internal tick per sample, so its output IS 49716 Hz; consuming it at
-//    another rate detunes oscillators AND stretches envelopes (their b553d03:
-//    "wrong notes and distortion"). We resample to the 48 kHz HDMI sink.
+//    internal tick per sample, so its output IS 49716 Hz; consuming it at any
+//    other rate detunes every oscillator AND stretches the envelopes, which
+//    sounds like wrong notes plus distortion. We resample to the 48 kHz sink
+//    rather than retune it, because HDMI locks us to exactly 48 kHz.
 //
 // LPF/resampler state persists across calls (reset in duke_music_reset_dsp).
 // ---------------------------------------------------------------------------
@@ -202,10 +204,11 @@ extern void OPL_calc_buffer_stereo(OPL *opl, int32_t *buffer, uint32_t nsamples)
 // 16.16 step: how many chip samples advance per output sample.
 #define RESAMP_STEP ((uint32_t)(((uint64_t)DUKE_OPL_NATIVE_RATE << 16) / DUKE_SINK_RATE))
 
-// Output gain, as a left shift. 3 (=8x) is frank-duke3d's tuned value ("matches
-// Doom/Heretic OPL output level"; they backed off from 10x because percussion
-// hard-clipped). Music is summed into multivoc's SFX division, so if loud SFX
-// over loud music clips, drop this to 2 rather than touching the SFX path.
+// Output gain, as a left shift. 3 (=8x) is the tuned value; more than this
+// hard-clips percussion transients. Music is summed into multivoc's SFX
+// division, so if loud SFX over loud music clips, drop this to 2 rather than
+// touching the SFX path. Watch the `clip` counter in the DUKE_VIDEO_DIAG
+// audio report when changing it.
 #ifndef DUKE_MUSIC_GAIN_SHIFT
 #define DUKE_MUSIC_GAIN_SHIFT 3
 #endif

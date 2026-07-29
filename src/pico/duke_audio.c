@@ -227,7 +227,7 @@ uint32_t duke_audio_take_starve_count(void)
 // mid-update — calling it there indexes them with garbage and corrupts PSRAM.
 // So multivoc queues here instead (see MV_INVOKE_CALLBACK in multivoc.c) and
 // duke_audio_run_deferred_callbacks() dispatches from a frame boundary on
-// core0. Mirrors frank-duke3d's process_pending_callbacks() design.
+// core0.
 // ---------------------------------------------------------------------------
 #define CB_QUEUE_SIZE 64
 typedef struct { void (*fn)(unsigned long); unsigned long val; } cb_entry_t;
