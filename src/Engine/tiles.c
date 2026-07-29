@@ -54,10 +54,18 @@ void setviewtotile(short tilenume, int32_t tileWidth, int32_t tileHeight)
     copybufbyte(&startdmost[windowx1],&bakdmost[windowx1],(windowx2-windowx1+1)*sizeof(bakdmost[0]));
     setview(0,0,tileHeight-1,tileWidth-1);
     setaspect(65536,65536);
+    /* ylookup[] must step by the SAME stride the rasteriser uses, which is the
+     * one handed to setBytesPerLine() below -- tileHeight, because a BUILD tile
+     * is stored rotated. Stepping by tileWidth instead (100 vs 160 for the
+     * 160x100 savegame thumbnail) makes every rendered row land 60 bytes short
+     * of where the renderer thinks it is, so the skew accumulates down the
+     * image: recognisable at the top, noise by the bottom. That is exactly what
+     * the corrupted save-game screenshot looked like. Upstream BUILD uses ysiz
+     * for both. */
     j = 0;
     for(i=0; i<=tileWidth; i++) {
         ylookup[i] = j;
-        j += tileWidth;
+        j += tileHeight;
     }
     setBytesPerLine(tileHeight);
     setviewcnt++;
