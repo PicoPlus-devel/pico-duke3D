@@ -178,16 +178,30 @@ void suckcache (int32_t *suckptr)
 			cac[i].lock = &zerochar;
 			cac[i].hand = 0;
 
-				/* Combine empty blocks */
+				/* Combine empty blocks.
+			 *
+			 * copybufBYTE, not copybuf: copybuf() copies DWORDS (see
+			 * fixedPoint_math.c), and the count here is in BYTES, so the
+			 * original moved 4x too much and ran off the end of cac[] --
+			 * clobbering ~150 KB of whatever followed it. allocache() one
+			 * screen up gets this right; these two call sites did not.
+			 *
+			 * On this port the casualties were filesystem.c's LZW buffer
+			 * pointers, which sit inside the overrun window: they were
+			 * overwritten with garbage, so dfwrite()'s "if (lzwbuf2 == NULL)
+			 * allocache(...)" saw a non-NULL pointer, skipped the allocation
+			 * and handed compress() a wild address. Saving a game hardfaulted
+			 * in clearbuf() as soon as the tile cache had churned enough for
+			 * suckcache() to merge two free blocks. */
 			if ((i > 0) && (*cac[i-1].lock == 0))
 			{
 				cac[i-1].leng += cac[i].leng;
-				cacnum--; copybuf(&cac[i+1],&cac[i],(cacnum-i)*sizeof(cactype));
+				cacnum--; copybufbyte(&cac[i+1],&cac[i],(cacnum-i)*sizeof(cactype));
 			}
 			else if ((i < cacnum-1) && (*cac[i+1].lock == 0))
 			{
 				cac[i+1].leng += cac[i].leng;
-				cacnum--; copybuf(&cac[i+1],&cac[i],(cacnum-i)*sizeof(cactype));
+				cacnum--; copybufbyte(&cac[i+1],&cac[i],(cacnum-i)*sizeof(cactype));
 			}
 		}
 }
