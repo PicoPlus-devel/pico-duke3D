@@ -191,6 +191,43 @@ _ssize_t write(int fd, const void *buf, size_t n)
 }
 off_t lseek(int fd, off_t off, int whence)      { return duke_lseek(fd, off, whence); }
 
+// "Does this file exist?" -- and it must be backed, not stubbed.
+//
+// SafeFileExists() (Game/global.c) is access(path, F_OK), and newlib's access()
+// goes through _stat, which the SDK does not implement -- the link even warns
+// "_stat is not implemented and will always fail". So SafeFileExists() answered
+// FALSE for every file, and CONFIG_ReadSetup() reacted by doing
+//
+//     if (!SafeFileExists(setupfilename)) { fopen(setupfilename, "w"); ... }
+//
+// i.e. it TRUNCATED the settings file on every boot, immediately before loading
+// it. Saving worked the whole time; the read side destroyed the file first.
+// The same call also gates level/RTS/CON lookups and TCkopen4load's game_dir
+// probe, so all of those were silently answering "missing" too.
+int access(const char *path, int mode)
+{
+    FILINFO fno;
+    if (f_stat(strip_dotslash(path), &fno) != FR_OK) { errno = ENOENT; return -1; }
+    // FatFs has no permission model beyond a read-only attribute; honour that
+    // much rather than claiming write access we do not have.
+    if ((mode & W_OK) && (fno.fattrib & AM_RDO)) { errno = EACCES; return -1; }
+    return 0;
+}
+
+// stat() by path, for the same reason: the SDK leaves _stat unimplemented.
+static int duke_stat(const char *path, struct stat *st)
+{
+    FILINFO fno;
+    if (!st) { errno = EFAULT; return -1; }
+    if (f_stat(strip_dotslash(path), &fno) != FR_OK) { errno = ENOENT; return -1; }
+    memset(st, 0, sizeof(*st));
+    st->st_mode = (fno.fattrib & AM_DIR) ? S_IFDIR : S_IFREG;
+    st->st_size = (off_t)fno.fsize;
+    return 0;
+}
+int stat(const char *path, struct stat *st)  { return duke_stat(path, st); }
+int _stat(const char *path, struct stat *st) { return duke_stat(path, st); }
+
 // Duke removes its temp file on the way out (gameexit: unlink("duke3d.tmp")),
 // and the config writer replaces files in place.
 int unlink(const char *path)
