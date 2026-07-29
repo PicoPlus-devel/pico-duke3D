@@ -38,6 +38,7 @@
 #include "hardware/pio.h"
 #include "ff.h"
 #include "tf_card.h"
+#include "duke_dostext.h"
 
 #define DUKE_MAXFDS  16
 #define DUKE_FD_BASE 3    // keep clear of stdio fds 0/1/2
@@ -169,6 +170,16 @@ static off_t duke_lseek(int fd, off_t offset, int whence)
     return (off_t)pos;
 }
 
+// Everything written to stdout/stderr goes to the UART as before AND, while the
+// game is still starting up, to the on-screen DOS console (duke_dostext.c). That
+// is the whole mechanism behind the startup screen: in DOS this text WAS the
+// screen, so mirroring stdout reproduces it without touching game code.
+static int console_write(const char *buf, int len)
+{
+    duke_dostext_write(buf, (size_t)len);
+    return stdio_put_string(buf, len, false, true);
+}
+
 // ---------------------------------------------------------------------------
 // Layer 1: POSIX wrappers — what the engine's filesystem.c calls directly.
 // ---------------------------------------------------------------------------
@@ -178,7 +189,7 @@ _ssize_t read(int fd, void *buf, size_t n)      { return duke_read(fd, buf, n); 
 _ssize_t write(int fd, const void *buf, size_t n)
 {
     // Keep the stdio handles working even through the POSIX name.
-    if (fd == 1 || fd == 2) return stdio_put_string((const char *)buf, (int)n, false, true);
+    if (fd == 1 || fd == 2) return console_write((const char *)buf, (int)n);
     return duke_write(fd, buf, n);
 }
 off_t lseek(int fd, off_t off, int whence)      { return duke_lseek(fd, off, whence); }
@@ -211,8 +222,7 @@ int _read(int handle, char *buffer, int length)
 
 int _write(int handle, char *buffer, int length)
 {
-    if (handle == 1 || handle == 2)
-        return stdio_put_string(buffer, length, false, true);
+    if (handle == 1 || handle == 2) return console_write(buffer, length);
     return (int)duke_write(handle, buffer, (size_t)length);
 }
 

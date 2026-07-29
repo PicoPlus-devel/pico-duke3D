@@ -38,6 +38,8 @@ add_executable(duke3d_game
     duke_boot.c
     duke_psram.c
     duke_fatfs_io.c
+    duke_dostext.cpp
+    ${CMAKE_SOURCE_DIR}/3rdparty/pico_shared_drivers/fonts/FrensFonts.cpp
     pico_display.c
     duke_usb_input.cpp
     duke_audio.c
@@ -53,6 +55,7 @@ add_executable(duke3d_game
 target_include_directories(duke3d_game PRIVATE
     ${CMAKE_CURRENT_LIST_DIR}
     ${CMAKE_SOURCE_DIR}/3rdparty/emu8950
+    ${CMAKE_SOURCE_DIR}/3rdparty/pico_shared_drivers/fonts   # pico_shared 8x8 font
 )
 
 # emu8950 (whole file is gated on USE_EMU8950_OPL). Its hot functions are forced

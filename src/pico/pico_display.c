@@ -19,6 +19,7 @@
 #include "hardware/clocks.h"
 
 #include "video_output.h"          // pico_hdmi
+#include "duke_dostext.h"
 #include "hstx_data_island_queue.h"
 
 // BUILD engine headers (declarations + functions we drive).
@@ -106,6 +107,13 @@ void _platform_init(int argc, char **argv, const char *title, const char *iconNa
     s_video_up = true;
     printf("pico_display: HSTX 640x480 up (clk_hstx=%lu)\n",
            (unsigned long)clock_get_hz(clk_hstx));
+
+    // Put Duke's DOS startup sequence on screen. This has to happen here and
+    // not later: Duke calls _platform_init() before Startup(), so from this
+    // point every "Using: 'DUKE3D.GRP'" / "Compiling: 'GAME.CON'" line the game
+    // prints is mirrored to the display as well as the UART. It renders into
+    // the RGB555 scanout surface directly, because no palette is loaded yet.
+    duke_dostext_init(s_rgb, FB_W);
 
     // USB host after video (fruitjam-doom order): gamepad + keyboard input.
     extern void duke_usb_init(void);
@@ -318,6 +326,11 @@ void duke_pico_idle(void)
 void _nextpage(void)
 {
     s_page_count++;   // game-frame counter (see the diag report below)
+
+    // First real game frame: the engine now owns the surface, so retire the
+    // startup console. Mirroring past this point would draw text over the game
+    // (and the palette expansion below overwrites it anyway).
+    if (duke_dostext_active()) duke_dostext_stop();
 
     // _handle_events -> duke_pico_idle also drains the deferred sound
     // callbacks, so there is no separate dispatch needed here.
