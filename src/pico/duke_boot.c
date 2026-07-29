@@ -33,19 +33,43 @@ static void hf_puthex(uint32_t v)
     }
 }
 
-void isr_hardfault(void)
+static void hf_puts(const char *p) { for (; *p; p++) uart_putc_raw(uart0, *p); }
+static void hf_field(const char *name, uint32_t v) { hf_puts(name); hf_puthex(v); }
+
+// The exception frame is [r0 r1 r2 r3 r12 lr pc xpsr] at the SP in use when the
+// fault was taken. Reading MSP from inside a normal C function gets this WRONG:
+// the compiler's prologue has already pushed registers, so the frame is not at
+// MSP and lr/pc come out as neighbouring garbage. That is not hypothetical -- it
+// had this handler reporting pc=0x00000040 for a fault whose real PC was
+// 0x1002d3c2, which sent a debugging session chasing a wild branch that never
+// happened. Hence the naked trampoline: nothing is pushed, so r0 is the frame.
+//
+// Also dump the fault status registers. CFSR/HFSR say WHAT went wrong in one
+// read (0x01000000 = UFSR UNALIGNED, 0x00000100 = BFSR IBUSERR, 0x00000082 =
+// MMFSR DACCVIOL+MMARVALID, ...), which beats inferring it from an address.
+void hf_report(uint32_t *sp)
 {
-    uint32_t *sp;
-    __asm volatile("mrs %0, msp" : "=r"(sp));
-    const char *tag = "\n!HF sp=";
-    for (const char *p = tag; *p; p++) uart_putc_raw(uart0, *p);
-    hf_puthex((uint32_t)sp);
-    uart_putc_raw(uart0, ' '); uart_putc_raw(uart0, 'p'); uart_putc_raw(uart0, 'c'); uart_putc_raw(uart0, '=');
-    hf_puthex(sp[6]);   // stacked PC
-    uart_putc_raw(uart0, ' '); uart_putc_raw(uart0, 'l'); uart_putc_raw(uart0, 'r'); uart_putc_raw(uart0, '=');
-    hf_puthex(sp[5]);   // stacked LR
-    uart_putc_raw(uart0, '\n');
+    hf_field("\n!HF pc=", sp[6]);
+    hf_field(" lr=",  sp[5]);
+    hf_field(" psr=", sp[7]);
+    hf_field(" sp=",  (uint32_t)sp);
+    hf_field("\n!HF cfsr=", *(volatile uint32_t *)0xE000ED28u);
+    hf_field(" hfsr=",       *(volatile uint32_t *)0xE000ED2Cu);
+    hf_field(" mmfar=",      *(volatile uint32_t *)0xE000ED34u);
+    hf_field(" bfar=",       *(volatile uint32_t *)0xE000ED38u);
+    hf_puts("\n");
     while (1) { __asm volatile("nop"); }
+}
+
+__attribute__((naked)) void isr_hardfault(void)
+{
+    __asm volatile(
+        "tst lr, #4\n"          // which stack was in use?
+        "ite eq\n"
+        "mrseq r0, msp\n"
+        "mrsne r0, psp\n"
+        "b hf_report\n"
+    );
 }
 
 extern int  Duke3D_main(int argc, char **argv);

@@ -80,8 +80,12 @@ void initcache(uint8_t* dacachestart, int32_t dacachesize)
 
 	for(i=1;i<200;i++) lockrecip[i] = (1<<28)/(200-i);
 
-	cachestart = dacachestart;
-	cachesize = dacachesize;
+	/* Align the cache to 16 bytes and keep its length a multiple of 16, as
+	 * upstream BUILD does. Every handle allocache() returns is
+	 * cachestart + a running sum of block lengths, so if either the base or
+	 * any length is not a multiple of 16, handles come back MISALIGNED. */
+	cachestart = (uint8_t *)(((uintptr_t)dacachestart + 15) & ~(uintptr_t)15);
+	cachesize  = (dacachesize - (int32_t)(cachestart - dacachestart)) & ~15;
 
 	cac[0].leng = cachesize;
 	cac[0].lock = &zerochar;
@@ -92,7 +96,20 @@ void allocache (uint8_t** newhandle, int32_t newbytes, uint8_t  *newlockptr)
 {
 	int32_t i, z, zz, bestz=0, daval, bestval, besto=0, o1, o2, sucklen, suckz;
 
-	newbytes = newbytes+15;
+	/* Round UP to a whole 16 bytes -- the mask is the point, not the +15.
+	 *
+	 * Without it block lengths are arbitrary, and since a handle is
+	 * cachestart + sum(previous lengths), allocache() hands out unaligned
+	 * pointers. That is survivable for byte access and for the plain word
+	 * loops in clearbuf()/copybuf() at -Os, which is why it went unnoticed --
+	 * a single unaligned STR is permitted on Cortex-M33. At -O3 the compiler
+	 * turns those loops into STRD/STM, and multi-word stores REQUIRE
+	 * alignment: they raise an UNALIGNED UsageFault, which escalates to a
+	 * HardFault. Saving a game died exactly that way (CFSR=0x01000000,
+	 * HFSR=0x40000000, faulting address 0x112219ef -- odd, in the tile cache).
+	 * It also explains the corrupted save-game thumbnail: that screenshot
+	 * buffer is another allocache() block, written through a skewed pointer. */
+	newbytes = (newbytes + 15) & ~15;
 
 	if ((uint32_t)newbytes > (uint32_t)cachesize)
 	{
