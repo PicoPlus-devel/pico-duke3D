@@ -79,7 +79,7 @@ extern void duke_fatfs_init(void);    // SD mount + chdir /roms/duke3d
 static void setup_clocks(void)
 {
     vreg_disable_voltage_limit();
-    vreg_set_voltage(VREG_VOLTAGE_1_60);
+    vreg_set_voltage(VREG_VOLTAGE_1_50);
     qmi_hw->m[0].timing = 0x60007304;   // relax XIP timing before raising clk_sys
     sleep_ms(100);
     set_sys_clock_khz(378000, true);
