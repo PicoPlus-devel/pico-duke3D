@@ -54,6 +54,8 @@ static uint32_t s_page_count = 0;               // _nextpage calls = GAME frames
 static uint32_t s_idle_count = 0;               // duke_pico_idle calls (hot hook)
 static uint32_t s_core1_stack[2048] __attribute__((aligned(8)));
 static bool s_video_up = false;
+static volatile bool s_pal_dirty = false;   // palette changed since the last expand
+static uint32_t s_last_page_us = 0;         // when _nextpage last ran
 
 // core1 (DMA IRQ): fill 320 words (two RGB555 px each) from the RGB555 frame,
 // vertical nearest-neighbour 480->200, horizontal 2x doubling. Kept minimal.
@@ -69,6 +71,17 @@ static void __not_in_flash_func(duke_scanline_cb)(uint32_t v_scanline,
         uint32_t px = s[i];
         line_buffer[i] = px | (px << 16);
     }
+}
+
+// 8bpp -> RGB555 through the current palette. Called from _nextpage() every
+// frame, and from duke_pico_idle() when the palette changed but the game has
+// stopped flipping (see the comment there).
+static void expand_frame(void)
+{
+    const uint8_t *src = s_fb8;
+    uint16_t *dst = s_rgb;
+    for (int i = 0; i < FB_W * FB_H; i++) dst[i] = s_pal555[src[i]];
+    s_pal_dirty = false;
 }
 
 static void __not_in_flash_func(duke_vsync_cb)(void)
@@ -195,6 +208,7 @@ int VBE_setPalette(uint8_t *palettebuffer)
         p++;                               // reserved
         s_pal555[i] = (uint16_t)(((r >> 1) << 10) | ((g >> 1) << 5) | (b >> 1));
     }
+    s_pal_dirty = true;
     return 0;
 }
 
@@ -256,6 +270,23 @@ void duke_pico_idle(void)
     {
         extern void duke_audio_run_deferred_callbacks(void);
         duke_audio_run_deferred_callbacks();
+    }
+
+    // Duke assumes DOS VGA semantics, where writing the palette changes what is
+    // on screen immediately. Here the palette is baked into the RGB555 surface
+    // by _nextpage(), so a palette change with no following page flip is
+    // invisible. showtwoscreens() depends on exactly that: it fades to black,
+    // draws the order screen, flips (with the palette still black), fades back
+    // IN without flipping again, and then blocks in
+    // "while(!KB_KeyWaiting())". The screen stayed black and quitting looked
+    // like a hang.
+    //
+    // So re-expand here when the palette has moved and the game plainly is not
+    // flipping pages any more. The 50 ms gate is what keeps this free: during
+    // normal play _nextpage() runs every frame and clears the flag itself, so
+    // this never fires on the hot path -- only when something is blocking.
+    if (s_pal_dirty && s_video_up && (now_us - s_last_page_us) > 50000u) {
+        expand_frame();
     }
 
     // USB host + headphone detect are expensive (tuh_task, codec I2C) and do
@@ -340,9 +371,8 @@ void _nextpage(void)
     if (duke_dostext_active()) duke_dostext_stop();
 
     // Palette-expand the 8bpp frame into the RGB555 scanout buffer (core0).
-    const uint8_t *src = s_fb8;
-    uint16_t *dst = s_rgb;
-    for (int i = 0; i < FB_W * FB_H; i++) dst[i] = s_pal555[src[i]];
+    expand_frame();
+    s_last_page_us = time_us_32();
 
     // Pace to one HSTX frame so we cap near 60 Hz — but never hang if core1
     // stops advancing (that's exactly the failure we're diagnosing).
