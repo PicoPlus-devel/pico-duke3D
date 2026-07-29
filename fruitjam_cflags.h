@@ -21,7 +21,7 @@
 // the pad's X arrives as logical A and its A arrives as logical B -- which is
 // bound to Escape, so pressing what looks like fire opened the menu. Duke needs
 // all four face buttons regardless, so default to SNES mode. See
-// 3rdparty/pico_shared_drivers/usb_hid/hid_app.cpp and docs/CONTROLS.md.
+// 3rdparty/pico_shared_drivers/usb_hid/hid_app.cpp and README.md.
 #define MANTAPAD_DEFAULT_SNES_MODE 1
 
 // pico_shared BoardConfigs identity of this board (consumed by nespad.cpp in

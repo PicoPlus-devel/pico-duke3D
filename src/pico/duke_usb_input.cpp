@@ -9,7 +9,7 @@
 //  drives menu navigation AND gameplay.
 //
 //  Pad mapping (hid_app folds D-pad hat + left stick into the direction bits).
-//  Full table, the SNES-pad caveat and the save/load procedure: docs/CONTROLS.md.
+//  Full table, the SNES-pad caveat and the save/load procedure: see README.md.
 //    D-pad/stick  -> arrow keys        (menu nav + move/turn)
 //    A            -> Enter             (menu select; also accepts a save name)
 //    B            -> Escape            (menu back / menu open)
