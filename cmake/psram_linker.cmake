@@ -22,6 +22,12 @@
 # explains why halving the synth cost (reference renderer -> LINEAR+slot_render)
 # barely moved the underrun rate: core1 was not short of cycles, it was stalled
 # on the bus. Only ~48 KB total moves here, against ~252 KB of free SRAM.
+
+# SRAM taken off the top for the two stack sections (core0's plus the SDK's
+# unused core1 one, both sized by PICO_STACK_SIZE — see src/pico/CMakeLists.txt).
+# Must be >= 2 * PICO_STACK_SIZE; ld errors out if the sections do not fit.
+set(DUKE_STACK_REGION "16k" CACHE STRING "SRAM reserved at the top for stacks")
+
 # audiolib translation units inside libduke.a (mixer, MIDI sequencer, FM driver).
 set(DUKE_AUDIOLIB_OBJS
     multivoc.c.o mv_mix.c.o   pitch.c.o    midi.c.o   al_midi.c.o
@@ -81,18 +87,30 @@ function(duke_use_psram_linker_script target)
     #  __scratch_x / __scratch_y user fails to link — emu8950's slot_render.cpp
     #  puts 1 KB in __scratch_y and did exactly that.
     #
-    #  So move both stack sections into RAM (450 KB of the 512 KB is free) and
-    #  recompute the stack symbols from where they actually landed. That leaves
-    #  both scratch banks entirely free for their intended users. crt0 sets SP
-    #  from __stack == __StackTop, so redirecting these two assignments is what
-    #  actually moves the stack.
+    #  So carve a dedicated STACK region off the TOP of RAM and put both stack
+    #  sections there. That leaves both scratch banks entirely free for their
+    #  intended users. crt0 sets SP from __stack == __StackTop, so redirecting
+    #  the two symbol assignments below is what actually moves the stack.
+    #
+    #  A DEDICATED REGION, not just "> RAM": placing the stacks in RAM lets them
+    #  land at the current cursor, i.e. immediately after .bss — which is exactly
+    #  where the HEAP starts. sbrk grows from `end` (end of .bss) up to
+    #  __StackLimit, so the heap then eats the stack after ~18 KB of malloc, and
+    #  Duke allocates well past that during MV_Init. That HARDFAULTED on hardware
+    #  with garbage return addresses (pc=0x00000100) right after
+    #  "audio: playback started". Shrinking RAM by the stack size instead means
+    #  the SDK's own `__StackLimit = ORIGIN(RAM) + LENGTH(RAM)` now lands exactly
+    #  at the stack bottom, so sbrk stops below the stack with no further edits.
+    #  When touching this, check BOTH invariants: the stack must be outside
+    #  __bss_start__..__bss_end__ (or crt0 zeroes the stack it is running on) AND
+    #  outside `end`..__StackLimit (or the heap grows into it).
     string(REPLACE
         "    .stack1_dummy (NOLOAD):\n    {\n        *(.stack1*)\n    } > SCRATCH_X"
-        "    .stack1_dummy (NOLOAD):\n    {\n        *(.stack1*)\n    } > RAM"
+        "    .stack1_dummy (NOLOAD):\n    {\n        *(.stack1*)\n    } > STACK"
         _ld "${_ld}")
     string(REPLACE
         "    .stack_dummy (NOLOAD):\n    {\n        KEEP(*(.stack*))\n    } > SCRATCH_Y"
-        "    .stack_dummy (NOLOAD):\n    {\n        KEEP(*(.stack*))\n    } > RAM"
+        "    .stack_dummy (NOLOAD):\n    {\n        KEEP(*(.stack*))\n    } > STACK"
         _ld "${_ld}")
     string(REPLACE
         "__StackOneTop = ORIGIN(SCRATCH_X) + LENGTH(SCRATCH_X);"
@@ -109,11 +127,20 @@ function(duke_use_psram_linker_script target)
             "which this engine overruns.")
     endif()
 
-    # 1) Add the PSRAM MEMORY region.
+    # 1) Rewrite the MEMORY block in ONE replacement: shorten RAM by the stack
+    #    carve-out, add the STACK region at the top of SRAM, and add PSRAM.
+    #    Doing these as separate string(REPLACE)s would be a trap — they all
+    #    match the same "RAM(rwx) ... LENGTH = 512k" text, so the second would
+    #    splice itself into the middle of the first's output.
     string(REPLACE
         "RAM(rwx) : ORIGIN =  0x20000000, LENGTH = 512k"
-        "RAM(rwx) : ORIGIN =  0x20000000, LENGTH = 512k\n    PSRAM(rwx) : ORIGIN = 0x11000000, LENGTH = 8192k"
+        "RAM(rwx) : ORIGIN =  0x20000000, LENGTH = 512k - ${DUKE_STACK_REGION}
+    STACK(rw) : ORIGIN = 0x20080000 - ${DUKE_STACK_REGION}, LENGTH = ${DUKE_STACK_REGION}
+    PSRAM(rwx) : ORIGIN = 0x11000000, LENGTH = 8192k"
         _ld "${_ld}")
+    if (NOT _ld MATCHES "STACK\\(rw\\)")
+        message(FATAL_ERROR "psram_linker: MEMORY rewrite failed in ${_src}")
+    endif()
 
     # 2) Audio-path CODE and read-only tables -> SRAM. Adding these objects to
     #    the flash .text/.rodata EXCLUDE_FILE lists makes them fall through to

@@ -140,15 +140,20 @@ pico_enable_stdio_uart(duke3d_game 1)
 pico_enable_stdio_usb(duke3d_game 0)
 
 # Core0 stack. The SDK default is 2 KB, which this engine overruns: BUILD/Duke
-# have deep frames (resetpspritevars ~1.8 KB, tics ~1.5 KB, enterlevel ~1.3 KB)
-# and two functions had multi-kilobyte buffers as locals (loadtmb 8000 B,
-# saveplayer/loadplayer 20 KB each — those are now static, see their comments).
-# cmake/psram_linker.cmake relocates both stack sections out of the 4 KB SCRATCH
-# banks into main RAM, so this is no longer capped at 4 KB and the scratch banks
-# stay free for their intended __scratch_x/__scratch_y users. 16 KB gives ~8x
-# headroom over the largest remaining frame. Note __StackLimit in the map is the
-# HEAP bound, not the stack bottom — the bottom is __StackTop - PICO_STACK_SIZE.
-target_compile_definitions(duke3d_game PRIVATE PICO_STACK_SIZE=16384)
+# have deep frames (resetpspritevars ~1.9 KB, tics ~1.5 KB, enterlevel ~1.3 KB),
+# and three functions had multi-kilobyte buffers as locals (loadtmb 8000 B,
+# saveplayer/loadplayer 20 KB each — all now static, see their comments).
+# 8 KB is ~4x the largest remaining frame.
+#
+# cmake/psram_linker.cmake moves both stack sections out of the 4 KB SCRATCH
+# banks into a dedicated STACK region carved off the top of SRAM, which is what
+# lets this exceed 4 KB while leaving the scratch banks free for their intended
+# __scratch_x/__scratch_y users. This value sizes BOTH stack sections, so
+# 2 * PICO_STACK_SIZE must fit DUKE_STACK_REGION (ld errors if it does not).
+#
+# Note __StackLimit in the map is the HEAP bound, not the stack bottom; the
+# bottom is __StackTop - PICO_STACK_SIZE.
+target_compile_definitions(duke3d_game PRIVATE PICO_STACK_SIZE=8192)
 
 # -fcommon: the sound stubs include duke3d.h, which carries tentative defs that
 # must merge with libduke's (compiled -fcommon) rather than multiply-define.
