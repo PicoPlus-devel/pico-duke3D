@@ -15,6 +15,15 @@
 // omitted for the M0 bring-up; add them when the SRAM map gets tight.
 //
 
+// The cheap AliExpress MantaPad (VID 081f) can act as a NES or a SNES pad, and
+// pico_shared defaults it to NES mode until the player presses Y. NES mode
+// reports only two face buttons, and since its "NES B" IS the physical SNES X,
+// the pad's X arrives as logical A and its A arrives as logical B -- which is
+// bound to Escape, so pressing what looks like fire opened the menu. Duke needs
+// all four face buttons regardless, so default to SNES mode. See
+// 3rdparty/pico_shared_drivers/usb_hid/hid_app.cpp and docs/CONTROLS.md.
+#define MANTAPAD_DEFAULT_SNES_MODE 1
+
 // pico_shared BoardConfigs identity of this board (consumed by nespad.cpp in
 // later milestones to pick its PIO program variant).
 #define HW_CONFIG 8

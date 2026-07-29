@@ -8,17 +8,25 @@
 //  (menus) and CONTROL_UpdateKeyboardState (in-game bindings) — so one mapping
 //  drives menu navigation AND gameplay.
 //
-//  Pad mapping (hid_app folds D-pad hat + left stick into the direction bits):
+//  Pad mapping (hid_app folds D-pad hat + left stick into the direction bits).
+//  Full table, the SNES-pad caveat and the save/load procedure: docs/CONTROLS.md.
 //    D-pad/stick  -> arrow keys        (menu nav + move/turn)
-//    A            -> Enter             (menu select)
+//    A            -> Enter             (menu select; also accepts a save name)
 //    B            -> Escape            (menu back / menu open)
-//    START        -> Escape
+//    START        -> Escape            (same as B on purpose)
 //    X            -> LeftControl       (fire)
 //    Y            -> Space             (open/use)
 //    L            -> LeftShift         (run)
 //    R            -> LeftAlt           (strafe)
 //    SELECT       -> A key             (jump)
-//    C            -> Z key             (crouch)
+//    C            -> Z key             (crouch -- NOT present on a SNES pad, so
+//                                       crouch is unreachable on one; move it to
+//                                       B if wanted, B duplicates START)
+//
+//  MantaPad note: that pad boots in NES mode, where only two face buttons are
+//  reported and its "NES B" is physically the SNES X -- so X arrived as logical
+//  A and A arrived as logical B (= Escape), and fire opened the menu until Y was
+//  pressed. Defaulted to SNES mode via MANTAPAD_DEFAULT_SNES_MODE.
 //
 //  Init/poll pattern and the PIO-USB configuration mirror fruitjam-doom's
 //  d_main.c / i_usbhid.cpp (proven on this exact board).
