@@ -16,6 +16,8 @@
 #include "hardware/watchdog.h"
 #include "hardware/structs/qmi.h"
 
+#include "duke_dostext.h"
+
 // ---------------------------------------------------------------------------
 // Hardfault breadcrumb (system-freeze diagnosis). Raw UART register writes —
 // no stdio, no locks — so it works from any context on either core. If the
@@ -118,6 +120,10 @@ int main(void)
 {
     setup_clocks();
     stdio_init_all();
+    // Mirror everything printed from here on to the DOS-style startup screen.
+    // Registered before the first printf so the whole sequence is captured; the
+    // text is buffered until the display comes up in _platform_init.
+    duke_dostext_attach_stdio();
     sleep_ms(500);
     printf("\n\n=== pico-duke3D (M2) — Adafruit Fruit Jam ===\n");
     printf("clk_sys=%lu clk_hstx=%lu\n",

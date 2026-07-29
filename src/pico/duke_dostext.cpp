@@ -23,6 +23,9 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "pico/stdio.h"
+#include "pico/stdio/driver.h"
+
 #include "duke_dostext.h"
 #include "FrensFonts.h"
 
@@ -120,6 +123,31 @@ void duke_dostext_init(uint16_t *surface, int stride)
     draw_header();
     repaint_text();          // replays the pre-init backlog
     s_active = true;
+}
+
+// Capture as a pico_stdio DRIVER rather than by overriding _write.
+//
+// _write is NOT the choke point on this SDK: pico_printf link-wraps printf and
+// puts (__wrap_printf / __wrap_puts) and sends them straight to stdio, so they
+// never reach the newlib syscall at all. Hooking _write therefore caught almost
+// nothing -- the only startup line that ever showed up was a STUB notice, and
+// only because the stock STUBBED macro used fprintf(), which is not wrapped.
+// A registered driver sits below every path (wrapped printf/puts, newlib FILE*
+// writes, and stdio_put_string), so it sees the whole startup sequence.
+static void dostext_out_chars(const char *buf, int len)
+{
+    duke_dostext_write(buf, (size_t)len);
+}
+
+static stdio_driver_t s_dostext_driver = {
+    .out_chars = dostext_out_chars,
+    .out_flush = NULL,
+    .in_chars  = NULL,
+};
+
+void duke_dostext_attach_stdio(void)
+{
+    stdio_set_driver_enabled(&s_dostext_driver, true);
 }
 
 void duke_dostext_stop(void)

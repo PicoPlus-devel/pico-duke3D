@@ -38,7 +38,6 @@
 #include "hardware/pio.h"
 #include "ff.h"
 #include "tf_card.h"
-#include "duke_dostext.h"
 
 #define DUKE_MAXFDS  16
 #define DUKE_FD_BASE 3    // keep clear of stdio fds 0/1/2
@@ -170,13 +169,11 @@ static off_t duke_lseek(int fd, off_t offset, int whence)
     return (off_t)pos;
 }
 
-// Everything written to stdout/stderr goes to the UART as before AND, while the
-// game is still starting up, to the on-screen DOS console (duke_dostext.c). That
-// is the whole mechanism behind the startup screen: in DOS this text WAS the
-// screen, so mirroring stdout reproduces it without touching game code.
+// stdout/stderr keep going to stdio. The DOS startup screen is fed by a
+// registered stdio driver (see duke_dostext.cpp), not from here, because
+// pico_printf link-wraps printf/puts and they never reach this syscall.
 static int console_write(const char *buf, int len)
 {
-    duke_dostext_write(buf, (size_t)len);
     return stdio_put_string(buf, len, false, true);
 }
 
