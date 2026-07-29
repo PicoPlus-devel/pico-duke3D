@@ -224,6 +224,21 @@ void agecache(void)
 	}
 }
 
+/* Is this a plausible allocache() handle -- non-NULL and inside the cache?
+ *
+ * allocache() is supposed to be the only thing that changes these handles: when
+ * it purges a block it NULLs the owner's pointer (see *cac[].hand = 0 above) so
+ * the owner reallocates. Callers rely on that by testing "if (ptr == NULL)". If
+ * anything else corrupts the pointer, that test passes and the caller uses a
+ * wild address -- which is a hardfault, a long way from the cause. This lets a
+ * caller tell a live handle from a corrupted one. */
+int cache_ptr_valid(const void *p)
+{
+	const uint8_t *b = (const uint8_t *)p;
+	if (b == NULL || cachestart == NULL) return 0;
+	return (b >= cachestart) && (b < cachestart + cachesize);
+}
+
 void reportandexit(char  *errormessage)
 {
 	int32_t i, j;
