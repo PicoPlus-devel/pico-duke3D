@@ -20,6 +20,7 @@
 //  getcharslicefrom8x8font), the same one the bootloader and every emulator in
 //  the family uses, so the startup screen looks like they do.
 //
+#include <stdio.h>
 #include <string.h>
 
 #include "duke_dostext.h"
@@ -97,6 +98,16 @@ static void repaint_text(void)
 void duke_dostext_init(uint16_t *surface, int stride)
 {
     ensure_cells();          // keep whatever was printed before the display existed
+
+    // How much pre-display output the backlog actually caught. Printed before the
+    // surface is adopted, so this line itself is not counted.
+    int used = 0;
+    for (int r = FIRST_TEXT_ROW; r < DOSTEXT_ROWS; r++)
+        for (int c = 0; c < DOSTEXT_COLS; c++)
+            if (s_cells[r][c] != ' ') { used++; break; }
+    printf("dostext: %dx%d console up, %d backlog row(s) recovered\n",
+           DOSTEXT_COLS, DOSTEXT_ROWS, used);
+
     s_surface = surface;
     s_stride  = stride;
     if (s_surface) {
@@ -111,7 +122,15 @@ void duke_dostext_init(uint16_t *surface, int stride)
     s_active = true;
 }
 
-void duke_dostext_stop(void) { s_active = false; }
+void duke_dostext_stop(void)
+{
+    // Ignore stops that arrive before the console exists. The engine reaches
+    // _nextpage() via _updateScreenRect() during startup, well before it draws a
+    // real frame, and honouring those would retire the console before any text
+    // had been shown.
+    if (!s_surface) return;
+    s_active = false;
+}
 bool duke_dostext_active(void) { return s_active; }
 
 static void scroll_up(void)

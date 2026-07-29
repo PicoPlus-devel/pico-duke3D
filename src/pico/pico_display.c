@@ -327,16 +327,17 @@ void _nextpage(void)
 {
     s_page_count++;   // game-frame counter (see the diag report below)
 
-    // First real game frame: the engine now owns the surface, so retire the
-    // startup console. Mirroring past this point would draw text over the game
-    // (and the palette expansion below overwrites it anyway).
-    if (duke_dostext_active()) duke_dostext_stop();
-
     // _handle_events -> duke_pico_idle also drains the deferred sound
     // callbacks, so there is no separate dispatch needed here.
     _handle_events();
 
     if (!s_video_up) return;
+
+    // Retire the startup console only here, where a real game frame is about to
+    // be drawn -- NOT at the top of this function. The engine calls _nextpage()
+    // through _updateScreenRect() during startup, long before it draws anything,
+    // and stopping on those calls killed the console before any text appeared.
+    if (duke_dostext_active()) duke_dostext_stop();
 
     // Palette-expand the 8bpp frame into the RGB555 scanout buffer (core0).
     const uint8_t *src = s_fb8;
