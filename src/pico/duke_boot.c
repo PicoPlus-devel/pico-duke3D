@@ -1,10 +1,11 @@
 //
 //  duke_boot.c — RP2350 entry point for the Duke3D game image.
 //
-//  Brings up the hardware (clocks 378 MHz + fixed 126 MHz clk_hstx, PSRAM, SD)
-//  then calls the renamed Duke entry Duke3D_main(). Video/audio come up inside
+//  Brings up the hardware (clocks 378 MHz + 126 MHz clk_hstx, PSRAM, SD) then
+//  calls the renamed Duke entry Duke3D_main(). Video/audio come up inside
 //  Duke's own init (_platform_init -> pico_display). Clock sequence is the
-//  proven Fruit Jam path shared with the M0 bring-up (pico_main.c).
+//  proven Fruit Jam path shared with the M0 bring-up (pico_main.c), with the
+//  clk_hstx source branching on the board's USB transport — see setup_clocks.
 //
 #include <stdio.h>
 
@@ -24,16 +25,28 @@
 // freeze is a crash, this prints "!HF sp=... pc=... lr=..."; if NOTHING
 // appears and the system is frozen, it's a bus-level wedge (nothing executes,
 // not even the fault handler) — a decisive distinction.
+//
+// NO_USE_UART boards (Murmulator M2, whose GPIO 0/1 carry the Wii connector)
+// have no console at all, and uart0 is never taken out of reset there — poking
+// its registers would fault inside the fault handler. The handler stays
+// installed so a debugger still lands on a known symbol, it just has nothing
+// to print to.
 // ---------------------------------------------------------------------------
+#if NO_USE_UART
+#define hf_putc(c)  ((void)(c))
+#else
+#define hf_putc(c)  uart_putc_raw(uart0, (c))
+#endif
+
 static void hf_puthex(uint32_t v)
 {
     for (int i = 28; i >= 0; i -= 4) {
         int d = (v >> i) & 0xf;
-        uart_putc_raw(uart0, d < 10 ? ('0' + d) : ('a' + d - 10));
+        hf_putc(d < 10 ? ('0' + d) : ('a' + d - 10));
     }
 }
 
-static void hf_puts(const char *p) { for (; *p; p++) uart_putc_raw(uart0, *p); }
+static void hf_puts(const char *p) { for (; *p; p++) hf_putc(*p); }
 static void hf_field(const char *name, uint32_t v) { hf_puts(name); hf_puthex(v); }
 
 // The exception frame is [r0 r1 r2 r3 r12 lr pc xpsr] at the SP in use when the
@@ -85,13 +98,34 @@ static void setup_clocks(void)
     set_sys_clock_khz(378000, true);
     sleep_ms(100);
 
-    // clk_hstx = fixed 126 MHz from a retasked PLL_USB (decoupled from PLL_SYS
-    // jitter; safe because USB host runs on Pico-PIO-USB).
+#ifdef HAS_USBPIO
+    // clk_hstx = fixed 126 MHz from a retasked PLL_USB. Deliberately NOT
+    // derived from clk_sys even though 378/3 = 126 divides exactly: at 378 MHz
+    // PLL_SYS jitter propagates into the TMDS bit clock and strict HDMI sinks
+    // show sparkles. Safe only on PIO-USB boards, where the native USB
+    // controller (which needs PLL_USB at 48 MHz) is unused.
     pll_deinit(pll_usb);
     pll_init(pll_usb, 1, 756000000, 6, 1);   // 756 / 6 = 126 MHz
     clock_configure(clk_hstx, 0,
                     CLOCKS_CLK_HSTX_CTRL_AUXSRC_VALUE_CLKSRC_PLL_USB,
                     126000000u, 126000000u);
+#else
+    // Native-USB boards (Murmulator M2): the USB host controller needs PLL_USB
+    // at its stock 48 MHz, so it cannot be retasked. Derive clk_hstx from
+    // clk_sys instead — 378/3 = 126 exactly, which keeps the 25.2 MHz pixel
+    // clock and satisfies pico_display's 126 MHz assert. This mirrors the
+    // native-USB path in pico_shared's FrensHelpers::setClocksAndStartStdio()
+    // verbatim (the CLK_SYS aux tap; do NOT switch to the CLKSRC_PLL_SYS tap,
+    // the ecosystem has only ever shipped the CLK_SYS form on these boards).
+    // Trade-off: PLL_SYS jitter now rides on the TMDS bit clock, so a strict
+    // sink may sparkle. Unavoidable while PLL_USB is spoken for.
+    clock_configure(clk_hstx, 0,
+                    CLOCKS_CLK_HSTX_CTRL_AUXSRC_VALUE_CLK_SYS,
+                    378000000u, 126000000u);
+#endif
+    // set_sys_clock_khz parked clk_peri on PLL_USB@48 MHz (which the PIO-USB
+    // branch just retasked to 126) — put it on PLL_SYS at full speed on both
+    // variants, before stdio_init_all derives its UART divisors from it.
     clock_configure(clk_peri, 0,
                     CLOCKS_CLK_PERI_CTRL_AUXSRC_VALUE_CLKSRC_PLL_SYS,
                     378000000u, 378000000u);
@@ -149,7 +183,17 @@ int main(void)
     // text is buffered until the display comes up in _platform_init.
     duke_dostext_attach_stdio();
     sleep_ms(500);
-    printf("\n\n=== pico-duke3D (M2) — Adafruit Fruit Jam ===\n");
+    // Board name from the force-included cflags header's HW_CONFIG, so the
+    // startup screen names the board it was actually built for. (A UART-less
+    // board still shows all of this: duke_dostext mirrors stdout to HDMI.)
+#if HW_CONFIG == 13
+#define DUKE_BOARD_NAME "Murmulator M2"
+#elif HW_CONFIG == 8
+#define DUKE_BOARD_NAME "Adafruit Fruit Jam"
+#else
+#define DUKE_BOARD_NAME "unknown board"
+#endif
+    printf("\n\n=== pico-duke3D — %s ===\n", DUKE_BOARD_NAME);
     printf("clk_sys=%lu clk_hstx=%lu\n",
            (unsigned long)clock_get_hz(clk_sys),
            (unsigned long)clock_get_hz(clk_hstx));

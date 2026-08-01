@@ -1,8 +1,9 @@
 # pico-duke3D
 
-Duke Nukem 3D (Chocolate Duke3D / BUILD engine) port to the RP2350, targeting the
-**Adafruit Fruit Jam** (`HW_CONFIG 8`). Built on the same skeleton as
-[fruitjam-doom](../fruitjam-doom), reusing Frank's `pico_shared` driver library.
+Duke Nukem 3D (Chocolate Duke3D / BUILD engine) port to the RP2350, for the
+**Adafruit Fruit Jam** (`HW_CONFIG 8`) and the **Murmulator M2** (`HW_CONFIG 13`).
+Built on the same skeleton as [fruitjam-doom](../fruitjam-doom), reusing Frank's
+`pico_shared` driver library.
 
 `DUKE3D.GRP` is **streamed from the SD card** via BUILD's `cache1d` — it does not
 fit in the 8 MB PSRAM, which instead holds the tile cache and the engine's map
@@ -13,9 +14,9 @@ Design and milestones: see the approved plan at
 
 ## Status
 
-Playable, with sound and music. Hardware-verified:
+Playable, with sound and music. Hardware-verified **on the Fruit Jam**:
 
-- **378 MHz @ 1.60 V**, `clk_hstx` a fixed 126 MHz from a retasked PLL_USB.
+- **378 MHz @ 1.50 V**, `clk_hstx` a fixed 126 MHz from a retasked PLL_USB.
 - **HDMI** 640×480p60 over HSTX (`pico_hdmi`), core1-owned, ~30 fps in-level.
 - **PSRAM** 8 MB on QMI CS1; **SD** over SPI0 with FatFs.
 - **Sound effects and OPL2 music**, with headphone-jack detection switching
@@ -23,9 +24,48 @@ Playable, with sound and music. Hardware-verified:
   mutes, unplug and it returns.
 - **USB gamepad and keyboard** over PIO-USB.
 - **DOS-style startup screen** on the HDMI output (40×25, pico_shared's 8×8 font).
+- Bootloader variant, quit-to-picker, save/load and settings persistence.
 
-Awaiting hardware test: the bootloader variant, quit-to-picker, save/load, and
-settings persistence.
+The **Murmulator M2** build is complete and builds clean, but is **not yet
+hardware-tested**. See [Boards](#boards) for what differs there.
+
+## Boards
+
+The board is chosen at configure time by `DUKE_BOARD`, which force-includes
+`<tag>_cflags.h` into every translation unit. Everything the C code branches on
+lives in that one header.
+
+| | Fruit Jam (`fruitjam`) | Murmulator M2 (`murmulatorm2`) |
+|---|---|---|
+| `HW_CONFIG` | 8 | 13 |
+| `PICO_BOARD` | `adafruit_fruit_jam` | `pico2` |
+| Flash | 16 MB | 4 MB |
+| Video | HSTX 640×480p60, lanes 13/15/17/19 inverted | same |
+| `clk_hstx` | 126 MHz from a **retasked PLL_USB** (jitter-free) | 126 MHz **from `clk_sys`** (378/3) — PLL_USB is spoken for |
+| Audio DAC | TLV320DAC3100 + headphone detect | PCM5100A, no codec, no detect |
+| Audio routing | **exclusive**: headphones *or* HDMI | **both** sinks always live |
+| USB host | Pico-PIO-USB on GP1/GP2 | **native** RP2350 controller (OTG adapter) |
+| Controller ports | — | two NES/SNES ports on PIO (shared CLK/LAT) |
+| PSRAM | 8 MB on CS1 = GP47 | on CS1 = **GP8** |
+| SD (SPI0) | MOSI 35 / MISO 36 / SCK 34 / CS 39 | MOSI 7 / MISO 4 / SCK 6 / CS 5 |
+| UART console | UART0 on GP44/45 | **none** — GP0/1 are the Wii connector |
+
+Two consequences worth knowing on the Murmulator:
+
+* **No serial log.** The DOS-style startup screen on HDMI is the log — it
+  mirrors every `printf`. The hardfault breadcrumb in `duke_boot.c` is compiled
+  out with it (poking `uart0` while the peripheral is held in reset would fault
+  inside the fault handler). To get a console back, drop `NO_USE_UART` from
+  `murmulatorm2_cflags.h` and `-DDUKE_NO_STDIO_UART=1` from the build script —
+  but that drives GP0/1.
+* **PSRAM smaller than 8 MB still boots.** The 8 MB linker region is an
+  address-space declaration; the heap top is clamped at boot to what
+  `SetupPsram()` reports and the cache1d tile cache shrinks to fit. Roughly
+  2.1 MB of engine arrays are the hard floor — below about 4 MB total the port
+  is not worth running.
+
+Adding a board is a `<tag>_cflags.h` plus a `<tag>-build.sh`; nothing in
+`CMakeLists.txt` is board-specific.
 
 ## Build
 
@@ -33,14 +73,30 @@ Requires `PICO_SDK_PATH` in the environment (SDK 2.2.0, arm-none-eabi-gcc
 13.2.Rel1) and `picotool`.
 
 ```sh
-./fruitjam-build.sh                 # -> build_fruitjam/src/pico/duke3d_game.uf2
-./fruitjam-build-forbootloader.sh   # -> build_bl_fruitjam/src/pico/duke3d_game.uf2
+./fruitjam-build.sh                      # -> build_fruitjam/src/pico/duke3d_game.uf2
+./fruitjam-build-forbootloader.sh        # -> build_bl_fruitjam/...
+./murmulatorm2-build.sh                  # -> build_murmulatorm2/src/pico/duke3d_game.uf2
+./murmulatorm2-build-forbootloader.sh    # -> build_bl_murmulatorm2/...
 ```
 
-The second links the image into the pico-bootLoader's app partition at
-`0x10080000` instead of owning flash from `0x10000000`, so the picker can launch
-it — copy that UF2 to `/emu/8/` on the SD card. See `cmake/BootPartition.cmake`
-for the flash map. Any reset returns to the picker, as does quitting Duke.
+A plain `cmake -S . -B build` (VSCode / CMake Tools) still configures for the
+Fruit Jam.
+
+The `-forbootloader` variants link the image into the pico-bootLoader's app
+partition at `0x10080000` instead of owning flash from `0x10000000`, so the
+picker can launch it — copy that UF2 to `/emu/<HW_CONFIG>/` on the SD card. Any
+reset returns to the picker, as does quitting Duke.
+
+| Build | Image | App slot | Flash total |
+|---|---|---|---|
+| Fruit Jam standalone | `0x10000000` | — | 16 MB |
+| Fruit Jam bootloader | `0x10080000` | 15.5 MB | 16 MB |
+| Murmulator standalone | `0x10000000` | — | 4 MB |
+| Murmulator bootloader | `0x10080000` | 3.5 MB | 4 MB |
+
+Duke keeps **nothing** in flash — `DUKE3D.GRP` streams from SD and savegames sit
+next to it — so the whole partition goes to the app on both boards. See
+`cmake/BootPartition.cmake`.
 
 Useful options:
 
@@ -49,6 +105,7 @@ Useful options:
 | `-DDUKE_VIDEO_DIAG=1` | 1 Hz `vid:`/`audio:` health lines on core0 (fps, audio production rate, queue level, underruns) |
 | `-DDUKE_HSTX_DEBUG=1` | pico_hdmi's own core1 register dump. **Costs ~33 ms/s of core1 and starves the audio** — for debugging an HSTX wedge only, never for judging audio |
 | `-DDUKE_OPL_RENDERER=linear` | cheaper OPL renderer (~half the cost, quality unvalidated on device); default is `reference` |
+| `-DDUKE_PSRAM_SIZE=4096k` | shrink the linker's PSRAM region (the runtime clamp usually makes this unnecessary) |
 
 ## SD card
 
@@ -56,7 +113,8 @@ Useful options:
 /roms/duke3d/DUKE3D.GRP      the game data (shareware or registered/Atomic)
 /roms/duke3d/game0.sav       savegames land here, next to the GRP
 /roms/duke3d/duke3d.cfg      settings
-/emu/8/duke3d_game.uf2       only for the bootloader variant
+/emu/8/duke3d_game.uf2       bootloader variant, Fruit Jam
+/emu/13/duke3d_game.uf2      bootloader variant, Murmulator M2
 ```
 
 ## Controls
@@ -105,9 +163,28 @@ why pressing Y — or navigating a menu, which makes you press Y — appeared to
 "fix" it.
 
 Duke needs all four face buttons regardless, so this port defaults the pad to
-SNES mode via `MANTAPAD_DEFAULT_SNES_MODE` in `fruitjam_cflags.h`. The boot log
-reads `defaulting to SNES mode` instead of `Press Y to activate SNES mode`, and X
-is fire from the first frame — no Y press, no level restart.
+SNES mode via `MANTAPAD_DEFAULT_SNES_MODE` in the board cflags header. The boot
+log reads `defaulting to SNES mode` instead of `Press Y to activate SNES mode`,
+and X is fire from the first frame — no Y press, no level restart.
+
+### NES/SNES controller ports (Murmulator M2 only)
+
+The M2's two DE-9 ports are polled over PIO by the vendored `pico_shared` nespad
+driver and folded into the **same** scancode stream as the USB pads, so a **SNES
+pad in a port behaves exactly like a USB SNES pad** — the table above applies
+unchanged, one mapping to reason about. Both ports are OR-ed together, so two
+pads drive one Duke.
+
+A **plain NES pad has no fire button here.** Its two buttons report in the SNES
+serial positions B and Y, which this port maps to Escape and Space; fire lives on
+SNES **X**, which a NES pad does not have. The driver masks the ID bits that
+distinguish the two pad shapes before the game sees them, so it cannot be
+detected and corrected at runtime — use a SNES pad, or edit `nesToButtons()` in
+`src/pico/duke_usb_input.cpp`.
+
+USB input still works alongside the ports, through the RP2350's native USB
+controller — a pad or keyboard needs an OTG/host adapter on the module's own
+socket.
 
 ### USB keyboard
 
@@ -151,9 +228,10 @@ save — the slot shows blank. With a keyboard you can type a name at step 4.
 
 ```
 fruitjam_cflags.h              board config (HW_CONFIG 8), force-included at build
-fruitjam-build.sh              standalone build
-fruitjam-build-forbootloader.sh pico-bootLoader app-partition build
-CMakeLists.txt                 SDK init + vendored driver subdirs + src/pico
+murmulatorm2_cflags.h          board config (HW_CONFIG 13), likewise
+<tag>-build.sh                 standalone build for that board
+<tag>-build-forbootloader.sh   pico-bootLoader app-partition build
+CMakeLists.txt                 board selection + SDK init + driver subdirs + src/pico
 cmake/psram_linker.cmake       generates the linker script: PSRAM region, engine
                                .bss -> PSRAM, audio path -> SRAM, stack carve-out,
                                and the bootloader FLASH relink (single owner)
@@ -183,3 +261,10 @@ src/pico/                      RP2350 platform layer (replaces BUILD's sdlayer.c
 - **The stack lives in its own region at the top of SRAM.** It must stay outside
   both `__bss_start__..__bss_end__` (or crt0 zeroes the stack it is running on)
   and `end..__StackLimit` (or the heap grows into it).
+- **`ENABLE_PIO_USB` and the header's `HAS_USBPIO` must agree.** They configure
+  different halves of one decision — which `hcd_*.c` is linked, and which one
+  `tusb_config.h` asks for — and disagreeing versions link cleanly and boot a
+  board with no input at all. `duke_usb_input.cpp` `#error`s on the mismatch;
+  keep that check if you touch the USB wiring.
+- **Core voltage stays at `VREG_VOLTAGE_1_50` for 378 MHz.** 1.60 V bootloops
+  some boards.

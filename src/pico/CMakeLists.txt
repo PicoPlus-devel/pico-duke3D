@@ -1,33 +1,40 @@
 # M0 bring-up executable. The BUILD engine + Duke game and the full platform
 # layer (baselayer/video/sound/input/grp loader) are added in later milestones.
+#
+# FRUIT JAM ONLY, on purpose. pico_main.c is a hardware bring-up harness written
+# against that board specifically: it retasks PLL_USB as the HSTX source
+# unconditionally (only valid without a native USB host) and its headline test
+# is TLV320 headphone-jack detection, which no other supported board has. The
+# shipping image (duke3d_game below) is the portable one.
+if (DUKE_BOARD STREQUAL "fruitjam")
+    add_executable(duke3d
+        pico_main.c
+    )
 
-add_executable(duke3d
-    pico_main.c
-)
+    target_link_libraries(duke3d PRIVATE
+        pico_stdlib
+        pico_multicore
+        hardware_clocks
+        hardware_pll
+        hardware_vreg
+        hardware_dma
+        hardware_pio
+        hardware_i2c
+        hardware_spi
+        pico_hdmi
+        pico_audio_i2s_shared
+        tlv320dac3100
+        pico_fatfs
+        pico_psram
+    )
 
-target_link_libraries(duke3d PRIVATE
-    pico_stdlib
-    pico_multicore
-    hardware_clocks
-    hardware_pll
-    hardware_vreg
-    hardware_dma
-    hardware_pio
-    hardware_i2c
-    hardware_spi
-    pico_hdmi
-    pico_audio_i2s_shared
-    tlv320dac3100
-    pico_fatfs
-    pico_psram
-)
+    # Console on UART0 (GPIO 44/45 per fruitjam_cflags.h); native USB is free
+    # for the PIO-USB host wiring added in M3.
+    pico_enable_stdio_uart(duke3d 1)
+    pico_enable_stdio_usb(duke3d 0)
 
-# Console on UART0 (GPIO 44/45 per fruitjam_cflags.h); native USB is free for
-# the PIO-USB host wiring added in M3.
-pico_enable_stdio_uart(duke3d 1)
-pico_enable_stdio_usb(duke3d 0)
-
-pico_add_extra_outputs(duke3d)
+    pico_add_extra_outputs(duke3d)
+endif()
 
 # --- M1: the full Duke3D game image ----------------------------------------
 # Links the BUILD engine + game (libduke) with the RP2350 platform layer. The
@@ -133,10 +140,33 @@ target_link_libraries(duke3d_game PRIVATE
     pico_psram
     pico_shared_usb_hid
     tinyusb_host
-    tinyusb_pico_pio_usb
 )
 
-pico_enable_stdio_uart(duke3d_game 1)
+# USB host transport (see the ENABLE_PIO_USB block in the root CMakeLists).
+# DUKE_PIO_USB carries the CMake choice into C so duke_usb_input.cpp can
+# #error on a mismatch with the board header's HAS_USBPIO — the two disagreeing
+# otherwise links fine and boots a board with no input at all.
+target_compile_definitions(duke3d_game PRIVATE DUKE_PIO_USB=$<BOOL:${ENABLE_PIO_USB}>)
+if (ENABLE_PIO_USB)
+    target_link_libraries(duke3d_game PRIVATE tinyusb_pico_pio_usb)
+endif()
+
+# Legacy NES/SNES ports (Murmulator M2). The pin macros come from the board
+# cflags header; this only puts the driver in the link.
+if (DUKE_NESPAD)
+    target_link_libraries(duke3d_game PRIVATE pico_shared_nespad)
+    target_compile_definitions(duke3d_game PRIVATE DUKE_NESPAD=1)
+endif()
+
+# Console on the UART, unless the board needs those pins for something else
+# (Murmulator M2: GPIO 0/1 are its Wii connector, so DUKE_NO_STDIO_UART=1 and
+# printf reaches only the DOS startup screen on HDMI). Native USB is never a
+# stdio device here — it is the host port on the non-PIO-USB boards.
+if (DUKE_NO_STDIO_UART)
+    pico_enable_stdio_uart(duke3d_game 0)
+else()
+    pico_enable_stdio_uart(duke3d_game 1)
+endif()
 pico_enable_stdio_usb(duke3d_game 0)
 
 # Core0 stack. The SDK default is 2 KB, which this engine overruns: BUILD/Duke

@@ -28,6 +28,15 @@
 # Must be >= 2 * PICO_STACK_SIZE; ld errors out if the sections do not fit.
 set(DUKE_STACK_REGION "16k" CACHE STRING "SRAM reserved at the top for stacks")
 
+# Size of the PSRAM region declared to the linker. This is an ADDRESS-SPACE
+# declaration, not a promise about the fitted part: only .psram_bss (~2.1 MB of
+# engine/game arrays) is actually placed by ld, and everything above it is the
+# runtime bump heap, whose top duke_psram_init() clamps to whatever SetupPsram()
+# reports. So a board with a smaller part still boots — the cache1d tile cache
+# just gets less room (it caps at 4 MB and shrinks to fit, see tiles.c). Only
+# .psram_bss is a hard floor; below roughly 4 MB the port is not worth running.
+set(DUKE_PSRAM_SIZE "8192k" CACHE STRING "PSRAM region size in the linker script")
+
 # audiolib translation units inside libduke.a (mixer, MIDI sequencer, FM driver).
 set(DUKE_AUDIOLIB_OBJS
     multivoc.c.o mv_mix.c.o   pitch.c.o    midi.c.o   al_midi.c.o
@@ -136,7 +145,7 @@ function(duke_use_psram_linker_script target)
         "RAM(rwx) : ORIGIN =  0x20000000, LENGTH = 512k"
         "RAM(rwx) : ORIGIN =  0x20000000, LENGTH = 512k - ${DUKE_STACK_REGION}
     STACK(rw) : ORIGIN = 0x20080000 - ${DUKE_STACK_REGION}, LENGTH = ${DUKE_STACK_REGION}
-    PSRAM(rwx) : ORIGIN = 0x11000000, LENGTH = 8192k"
+    PSRAM(rwx) : ORIGIN = 0x11000000, LENGTH = ${DUKE_PSRAM_SIZE}"
         _ld "${_ld}")
     if (NOT _ld MATCHES "STACK\\(rw\\)")
         message(FATAL_ERROR "psram_linker: MEMORY rewrite failed in ${_src}")

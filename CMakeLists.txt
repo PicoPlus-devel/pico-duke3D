@@ -8,11 +8,31 @@ cmake_minimum_required(VERSION 3.13)
 
 set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
+# --- Board selection --------------------------------------------------------
+# DUKE_BOARD names the <tag>_cflags.h header that is force-included into every
+# TU (see below) and, with it, everything the C code branches on: HSTX lanes,
+# I2S driver, SD/PSRAM pins, USB transport, controller ports. Add a board by
+# dropping in a <tag>_cflags.h and a <tag>-build.sh; nothing else here is
+# board-specific.
+#
+#   fruitjam      Adafruit Fruit Jam       (HW_CONFIG 8,  PIO-USB, TLV320)
+#   murmulatorm2  Murmulator M2 / Pico 2   (HW_CONFIG 13, native USB, PCM5100A)
+#
+set(DUKE_BOARD "fruitjam" CACHE STRING "Board tag: selects <tag>_cflags.h")
+if (NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${DUKE_BOARD}_cflags.h")
+    message(FATAL_ERROR
+        "DUKE_BOARD=${DUKE_BOARD} but ${DUKE_BOARD}_cflags.h does not exist. "
+        "Use one of the <tag>-build.sh scripts, or add the header.")
+endif()
+message(STATUS "pico-duke3D board: ${DUKE_BOARD} (${DUKE_BOARD}_cflags.h)")
+
 # --- Defaults so a plain `cmake -S . -B build` works ------------------------
 # (e.g. VSCode / CMake Tools, which does not pass the -D flags or CFLAGS that
 # fruitjam-build.sh sets). All are set only if not already provided, so the
 # build script and command-line -D overrides still win. These MUST precede the
 # pico_sdk_init.cmake include, which selects the toolchain from PICO_PLATFORM.
+# The PICO_BOARD default follows DUKE_BOARD's default: a plain configure builds
+# for the Fruit Jam, which is what VSCode / CMake Tools gets.
 if (NOT PICO_BOARD)
     set(PICO_BOARD adafruit_fruit_jam CACHE STRING "Target board (Adafruit Fruit Jam)")
 endif()
@@ -81,11 +101,12 @@ set(CMAKE_CXX_STANDARD 17)
 # -g3 -ggdb: debug symbols for source-level debugging in VSCode. They live in
 # the .elf only (stripped from the .uf2/.bin), so there is no flash-size cost
 # even in MinSizeRel. Matches fruitjam-doom.
-if (NOT CMAKE_C_FLAGS MATCHES "fruitjam_cflags.h")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -include ${CMAKE_CURRENT_SOURCE_DIR}/fruitjam_cflags.h -g3 -ggdb")
+set(DUKE_BOARD_CFLAGS "${CMAKE_CURRENT_SOURCE_DIR}/${DUKE_BOARD}_cflags.h")
+if (NOT CMAKE_C_FLAGS MATCHES "${DUKE_BOARD}_cflags.h")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -include ${DUKE_BOARD_CFLAGS} -g3 -ggdb")
 endif()
-if (NOT CMAKE_CXX_FLAGS MATCHES "fruitjam_cflags.h")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -include ${CMAKE_CURRENT_SOURCE_DIR}/fruitjam_cflags.h -g3 -ggdb")
+if (NOT CMAKE_CXX_FLAGS MATCHES "${DUKE_BOARD}_cflags.h")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -include ${DUKE_BOARD_CFLAGS} -g3 -ggdb")
 endif()
 
 pico_sdk_init()
@@ -94,14 +115,36 @@ if (PICO_ON_DEVICE AND NOT CMAKE_BUILD_TYPE STREQUAL "MinSizeRel")
     message(WARNING "Prefer -DCMAKE_BUILD_TYPE=MinSizeRel on RP2350 (binary size is tight).")
 endif()
 
-# USB host over Pico-PIO-USB: the first call inside tinyusb's family.cmake ran
-# before pico_sdk_init() (no pico_generate_pio_header yet) and was a no-op;
-# this one actually creates the tinyusb_pico_pio_usb target and appends
-# hcd_pio_usb.c to tinyusb_host_base (pattern from pico-infonesPlus).
-check_and_add_pico_pio_usb_support()
-if (NOT TARGET tinyusb_pico_pio_usb)
-    message(FATAL_ERROR "tinyusb_pico_pio_usb target missing — check PICO_PIO_USB_PATH (${PICO_PIO_USB_PATH})")
+# --- USB host transport ------------------------------------------------------
+# ENABLE_PIO_USB picks it at link time and MUST agree with the HAS_USBPIO macro
+# in the board's cflags header, which is what tusb_config.h and duke_usb_input
+# branch on. The two are cross-checked at compile time (DUKE_PIO_USB is handed
+# to the C code in src/pico/CMakeLists.txt, which #errors on a mismatch) —
+# without that, disagreeing settings link cleanly and produce a board with no
+# input at all. Default ON so the Fruit Jam scripts keep working unchanged;
+# native-USB boards pass -DENABLE_PIO_USB=0.
+if (NOT DEFINED ENABLE_PIO_USB)
+    set(ENABLE_PIO_USB 1)
 endif()
+if (ENABLE_PIO_USB)
+    # The first call inside tinyusb's family.cmake ran before pico_sdk_init()
+    # (no pico_generate_pio_header yet) and was a no-op; this one actually
+    # creates the tinyusb_pico_pio_usb target and appends hcd_pio_usb.c to
+    # tinyusb_host_base (pattern from pico-infonesPlus).
+    check_and_add_pico_pio_usb_support()
+    if (NOT TARGET tinyusb_pico_pio_usb)
+        message(FATAL_ERROR "tinyusb_pico_pio_usb target missing — check PICO_PIO_USB_PATH (${PICO_PIO_USB_PATH})")
+    endif()
+    message(STATUS "USB host: Pico-PIO-USB")
+else()
+    message(STATUS "USB host: native RP2350 controller")
+endif()
+
+# --- Legacy NES/SNES controller ports ----------------------------------------
+# Boards with wired controller ports (Murmulator M2) set this; the pin macros
+# themselves come from the board cflags header. OFF leaves nespad.cpp and its
+# PIO program out of the image entirely, so the Fruit Jam build is unchanged.
+option(DUKE_NESPAD "Poll legacy NES/SNES controller ports over PIO" OFF)
 
 # --- Vendored pico_shared drivers -------------------------------------------
 # Video (HSTX/HDMI), audio (I2S + TLV320 codec + headphone detect), PSRAM,
@@ -113,6 +156,9 @@ add_subdirectory(3rdparty/pico_shared_drivers/drivers/pico_fatfs)
 add_subdirectory(3rdparty/pico_shared_drivers/drivers/pico_psram)
 add_subdirectory(3rdparty/tusb_xinput)
 add_subdirectory(3rdparty/pico_shared_drivers/usb_hid)
+if (DUKE_NESPAD)
+    add_subdirectory(3rdparty/pico_shared_drivers/nespad)
+endif()
 
 # Duke3D BUILD engine + game logic (static lib; platform layer + link in src/pico).
 include(cmake/duke_engine.cmake)
