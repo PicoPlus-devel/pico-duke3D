@@ -38,16 +38,30 @@
 #include "hardware/pio.h"
 #include "ff.h"
 #include "tf_card.h"
+#include "duke_fatal.h"
 
 #define DUKE_MAXFDS  16
 #define DUKE_FD_BASE 3    // keep clear of stdio fds 0/1/2
+
+// Where the assets live, and the GRP name findGRPToUse() hardcodes for
+// PLATFORM_PICO (src/Game/game.c). Keep both in agreement with that.
+#define DUKE_ASSET_DIR "/roms/duke3d"
+#define DUKE_GRP_NAME  "DUKE3D.GRP"
 
 static FIL     s_fils[DUKE_MAXFDS];
 static uint8_t s_used[DUKE_MAXFDS];
 static FATFS   s_fs;
 
 // Mount the SD card and cd into the Duke asset directory. Called from
-// duke_boot before Duke3D_main (which opens the GRP first thing).
+// duke_boot AFTER the display is up (which is why it can call duke_fatal) and
+// before Duke3D_main, which opens the GRP first thing.
+//
+// All three failures here are fatal and used to be silent. Mount and chdir only
+// printed a warning and returned, and the game then died further downstream; a
+// missing GRP died in the engine's filesystem.c, which prints and then blocks in
+// getchar() -- a key that can never arrive, because no registered stdio driver
+// has in_chars. Checking the GRP here instead means the user is told which of
+// the three is actually wrong, on screen, before any of that.
 void duke_fatfs_init(void)
 {
     static pico_fatfs_spi_config_t cfg = {
@@ -62,12 +76,30 @@ void duke_fatfs_init(void)
     }
     FRESULT fr = f_mount(&s_fs, "", 1);
     if (fr != FR_OK) {
-        printf("duke_fatfs: MOUNT FAILED (%d) — SD inserted & FAT-formatted?\n", fr);
-        return;
+        printf("duke_fatfs: MOUNT FAILED (%d)\n", fr);
+        duke_fatal("No SD card (FatFs error %d).\n"
+                   "Insert a FAT/exFAT-formatted card with\n"
+                   "DUKE3D.GRP in /roms/duke3d.", fr);
     }
-    fr = f_chdir("/roms/duke3d");
-    printf("duke_fatfs: mounted; chdir /roms/duke3d -> %s\n",
-           fr == FR_OK ? "OK" : "MISSING (put DUKE3D.GRP there)");
+    fr = f_chdir(DUKE_ASSET_DIR);
+    if (fr != FR_OK) {
+        printf("duke_fatfs: chdir %s FAILED (%d)\n", DUKE_ASSET_DIR, fr);
+        duke_fatal("%s not found on the SD card.\n"
+                   "Create it and put DUKE3D.GRP in it.", DUKE_ASSET_DIR);
+    }
+    // Pre-flight the GRP by the same fixed name findGRPToUse() returns under
+    // PLATFORM_PICO (game.c). f_stat is case-insensitive on FAT, so the file may
+    // be named duke3d.grp on the card.
+    FILINFO fno;
+    fr = f_stat(DUKE_GRP_NAME, &fno);
+    if (fr != FR_OK) {
+        printf("duke_fatfs: %s missing from %s (%d)\n", DUKE_GRP_NAME, DUKE_ASSET_DIR, fr);
+        duke_fatal("%s not found in %s.\n"
+                   "Copy it from your Duke Nukem 3D\n"
+                   "installation onto the SD card.", DUKE_GRP_NAME, DUKE_ASSET_DIR);
+    }
+    printf("duke_fatfs: mounted; %s/%s (%lu KB)\n", DUKE_ASSET_DIR, DUKE_GRP_NAME,
+           (unsigned long)(fno.fsize / 1024));
 }
 
 static const char *strip_dotslash(const char *p)

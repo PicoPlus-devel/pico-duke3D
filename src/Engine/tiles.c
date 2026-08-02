@@ -153,8 +153,7 @@ void loadtile(short tilenume)
         
         if (artfil == -1){
             printf("Error, unable to load artfile:'%s'.\n",artfilename);
-            getchar();
-            exit(0);
+            DUKE_FATAL_ABORT();
         }
         
         faketimerhandler();

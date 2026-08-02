@@ -18,6 +18,7 @@
 #include "hardware/structs/qmi.h"
 
 #include "duke_dostext.h"
+#include "duke_fatal.h"
 
 // ---------------------------------------------------------------------------
 // Hardfault breadcrumb (system-freeze diagnosis). Raw UART register writes —
@@ -86,8 +87,10 @@ __attribute__((naked)) void isr_hardfault(void)
 }
 
 extern int  Duke3D_main(int argc, char **argv);
-extern void duke_psram_init(void);    // SetupPsram + zero .psram_bss + heap
-extern void duke_fatfs_init(void);    // SD mount + chdir /roms/duke3d
+extern void duke_psram_init(void);          // SetupPsram + zero .psram_bss + heap
+extern const char *duke_psram_error(void);  // NULL when the PSRAM is usable
+extern void duke_fatfs_init(void);          // SD mount + chdir /roms/duke3d
+extern void duke_video_ensure_up(void);     // HSTX + DOS console (pico_display.c)
 
 static void setup_clocks(void)
 {
@@ -147,9 +150,13 @@ static void setup_clocks(void)
 // Duke. No watchdog scratch handshake is needed for that — the picker is first
 // in flash, so every reset reaches it.
 //
-// Non-zero status (a failed assert or abort()) keeps the stock breakpoint loop
-// on purpose: rebooting would throw away the state right when a debugger wants
-// to inspect it, and hanging there is what those paths already did.
+// Non-zero status (a failed assert or abort()) does NOT reboot — that would
+// throw the state away right when a debugger wants to inspect it. It hands over
+// to duke_fatal(), which paints the reason on the HDMI console and then spins,
+// so the state survives for a debugger AND a user with no serial cable finds out
+// something died. (The stock __breakpoint() loop is gone: with no debugger
+// attached BKPT escalates to a HardFault, and isr_hardfault's breadcrumb would
+// then be the last thing on the UART instead of the reason.)
 // ---------------------------------------------------------------------------
 void __attribute__((noreturn)) _exit(int status)
 {
@@ -164,11 +171,16 @@ void __attribute__((noreturn)) _exit(int status)
         stdio_flush();
         watchdog_reboot(0, 0, 1);
     } else {
-        printf("\nduke3d: exit(%d) — halting for the debugger\n", status);
-        stdio_flush();
+        // Failed assert, abort(), or an Error() path that did not go through
+        // duke_fatal itself. Say so on the HDMI output too — this is the last
+        // chance to tell a user with no serial cable that something died, and
+        // duke_fatal never returns, so the breakpoint loop below is unreachable
+        // for this branch. (duke_fatal is re-entrancy guarded, so arriving here
+        // from inside a fatal just parks.)
+        printf("\nduke3d: exit(%d)\n", status);
+        duke_fatal("Unexpected exit (status %d).", status);
     }
     while (1) {
-        if (status != 0) __breakpoint();
         tight_loop_contents();
     }
 }
@@ -190,6 +202,8 @@ int main(void)
 #define DUKE_BOARD_NAME "Murmulator M2"
 #elif HW_CONFIG == 8
 #define DUKE_BOARD_NAME "Adafruit Fruit Jam"
+#elif HW_CONFIG == 2
+#define DUKE_BOARD_NAME "Adafruit DVI + SD"
 #else
 #define DUKE_BOARD_NAME "unknown board"
 #endif
@@ -198,7 +212,23 @@ int main(void)
            (unsigned long)clock_get_hz(clk_sys),
            (unsigned long)clock_get_hz(clk_hstx));
 
+    // PSRAM first, and only THEN the display. SetupPsram() drives the QMI in
+    // direct mode with interrupts off, and XIP reads stall while DIRECT_CSR.EN
+    // is set — if core1's scanout were already running, a flash fetch inside
+    // that window would stall it past the HSTX DMA deadline. Nothing is lost by
+    // waiting: the DOS console records into its character grid from the very
+    // first printf, so duke_video_ensure_up() replays these lines the moment the
+    // screen appears.
     duke_psram_init();
+
+    // From here on the boot log is on the HDMI output, which is the whole point:
+    // everything after this — the SD mount, the GRP, the engine startup — can
+    // fail, and those failures are what a user without a serial cable (or, on
+    // the Murmulator M2, without a UART at all) could never see.
+    duke_video_ensure_up();
+
+    if (duke_psram_error()) duke_fatal("%s", duke_psram_error());
+
     duke_fatfs_init();
 
     static char arg0[] = "duke3d";

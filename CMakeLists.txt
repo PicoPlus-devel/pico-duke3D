@@ -17,6 +17,8 @@ set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 #
 #   fruitjam      Adafruit Fruit Jam       (HW_CONFIG 8,  PIO-USB, TLV320)
 #   murmulatorm2  Murmulator M2 / Pico 2   (HW_CONFIG 13, native USB, PCM5100A)
+#   adafruitdvisd Adafruit DVI + SD boards (HW_CONFIG 2,  native USB, PCM5100A;
+#                 needs a Pico Plus 2 — PSRAM is on GPIO 47, an RP2350B pin)
 #
 set(DUKE_BOARD "fruitjam" CACHE STRING "Board tag: selects <tag>_cflags.h")
 if (NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${DUKE_BOARD}_cflags.h")

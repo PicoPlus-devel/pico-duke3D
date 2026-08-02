@@ -25,10 +25,24 @@ static char *s_psram_brk;
 // fitted. See duke_psram_init.
 static char *s_psram_limit;
 
+// Why the PSRAM is unusable, or NULL when it is fine. duke_psram_init cannot
+// report the failure itself: it runs BEFORE the HDMI output exists (SetupPsram
+// drives the QMI in direct mode, which stalls XIP, so bringing core1's scanout
+// up first would risk starving it). main() brings the display up and then reads
+// this, so the user sees the reason on screen instead of only on a UART.
+static char       s_error_buf[96];
+static const char *s_error;
+
+const char *duke_psram_error(void) { return s_error; }
+
 void duke_psram_init(void)
 {
     int32_t sz = SetupPsram(PSRAM_CS_PIN);   // PSRAM_CS_PIN from the board cflags
     if (sz <= 0) {
+        snprintf(s_error_buf, sizeof(s_error_buf),
+                 "No PSRAM found on GPIO %d.\nDuke3D cannot run without it.",
+                 PSRAM_CS_PIN);
+        s_error = s_error_buf;
         printf("duke_psram: NO PSRAM on GPIO %d — cannot run\n", PSRAM_CS_PIN);
         return;
     }
@@ -49,6 +63,10 @@ void duke_psram_init(void)
         // Not even the relocated .bss fits. Nothing good happens past here:
         // zeroing it would wrap, and the engine would run on arrays that alias
         // each other. Say so plainly rather than crash somewhere downstream.
+        snprintf(s_error_buf, sizeof(s_error_buf),
+                 "PSRAM too small: the engine arrays need\n%u KB, this chip has %ld KB.",
+                 (unsigned)(bss_len / 1024), (long)(sz / 1024));
+        s_error = s_error_buf;
         printf("duke_psram: FATAL — need %u KB for the engine arrays, chip has %ld KB\n",
                (unsigned)(bss_len / 1024), (long)(sz / 1024));
         return;

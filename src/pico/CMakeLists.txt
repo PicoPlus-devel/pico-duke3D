@@ -46,6 +46,7 @@ add_executable(duke3d_game
     duke_psram.c
     duke_fatfs_io.c
     duke_dostext.cpp
+    duke_fatal.c
     ${CMAKE_SOURCE_DIR}/3rdparty/pico_shared_drivers/fonts/FrensFonts.cpp
     pico_display.c
     duke_usb_input.cpp

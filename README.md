@@ -1,9 +1,10 @@
 # pico-duke3D
 
 Duke Nukem 3D (Chocolate Duke3D / BUILD engine) port to the RP2350, for the
-**Adafruit Fruit Jam** (`HW_CONFIG 8`) and the **Murmulator M2** (`HW_CONFIG 13`).
-Built on the same skeleton as [fruitjam-doom](../fruitjam-doom), reusing Frank's
-`pico_shared` driver library.
+**Adafruit Fruit Jam** (`HW_CONFIG 8`), the **Murmulator M2** (`HW_CONFIG 13`)
+and **Adafruit DVI + SD breakout boards** (`HW_CONFIG 2`). Built on the same
+skeleton as [fruitjam-doom](../fruitjam-doom), reusing Frank's `pico_shared`
+driver library.
 
 `DUKE3D.GRP` is **streamed from the SD card** via BUILD's `cache1d` — it does not
 fit in the 8 MB PSRAM, which instead holds the tile cache and the engine's map
@@ -23,11 +24,14 @@ Playable, with sound and music. Hardware-verified **on the Fruit Jam**:
   between I2S (TLV320DAC3100) and HDMI data-island audio — plug in and HDMI audio
   mutes, unplug and it returns.
 - **USB gamepad and keyboard** over PIO-USB.
-- **DOS-style startup screen** on the HDMI output (40×25, pico_shared's 8×8 font).
+- **DOS-style startup screen** on the HDMI output (40×25, pico_shared's 8×8 font),
+  live from the first line of boot, with **fatal errors reported on it** — see
+  [When something is wrong](#when-something-is-wrong).
 - Bootloader variant, quit-to-picker, save/load and settings persistence.
 
-The **Murmulator M2** build is complete and builds clean, but is **not yet
-hardware-tested**. See [Boards](#boards) for what differs there.
+The **Murmulator M2** and **Adafruit DVI + SD** builds are complete and build
+clean, but are **not yet hardware-tested**. See [Boards](#boards) for what
+differs there.
 
 ## Boards
 
@@ -35,20 +39,29 @@ The board is chosen at configure time by `DUKE_BOARD`, which force-includes
 `<tag>_cflags.h` into every translation unit. Everything the C code branches on
 lives in that one header.
 
-| | Fruit Jam (`fruitjam`) | Murmulator M2 (`murmulatorm2`) |
-|---|---|---|
-| `HW_CONFIG` | 8 | 13 |
-| `PICO_BOARD` | `adafruit_fruit_jam` | `pico2` |
-| Flash | 16 MB | 4 MB |
-| Video | HSTX 640×480p60, lanes 13/15/17/19 inverted | same |
-| `clk_hstx` | 126 MHz from a **retasked PLL_USB** (jitter-free) | 126 MHz **from `clk_sys`** (378/3) — PLL_USB is spoken for |
-| Audio DAC | TLV320DAC3100 + headphone detect | PCM5100A, no codec, no detect |
-| Audio routing | **exclusive**: headphones *or* HDMI | **both** sinks always live |
-| USB host | Pico-PIO-USB on GP1/GP2 | **native** RP2350 controller (OTG adapter) |
-| Controller ports | — | two NES/SNES ports on PIO (shared CLK/LAT) |
-| PSRAM | 8 MB on CS1 = GP47 | on CS1 = **GP8** |
-| SD (SPI0) | MOSI 35 / MISO 36 / SCK 34 / CS 39 | MOSI 7 / MISO 4 / SCK 6 / CS 5 |
-| UART console | UART0 on GP44/45 | **none** — GP0/1 are the Wii connector |
+| | Fruit Jam (`fruitjam`) | Murmulator M2 (`murmulatorm2`) | Adafruit DVI + SD (`adafruitdvisd`) |
+|---|---|---|---|
+| `HW_CONFIG` | 8 | 13 | 2 |
+| `PICO_BOARD` | `adafruit_fruit_jam` | `pico2` | `pimoroni_pico_plus2_rp2350` |
+| Flash | 16 MB | 4 MB | 16 MB |
+| Video | HSTX 640×480p60, lanes 13/15/17/19 **inverted** | same | lanes **12/14/16/18, not inverted** |
+| `clk_hstx` | 126 MHz from a **retasked PLL_USB** (jitter-free) | 126 MHz **from `clk_sys`** (378/3) — PLL_USB is spoken for | same as the M2 |
+| Audio DAC | TLV320DAC3100 + headphone detect | PCM5100A, no codec, no detect | PCM5100A (**optional module**), no detect |
+| Audio routing | **exclusive**: headphones *or* HDMI | **both** sinks always live | **both** sinks always live |
+| USB host | Pico-PIO-USB on GP1/GP2 | **native** RP2350 controller (OTG adapter) | **native** RP2350 controller (OTG adapter) |
+| Controller ports | — | two NES/SNES ports on PIO (shared CLK/LAT) | two NES/SNES ports on PIO (independent CLK/LAT) |
+| PSRAM | 8 MB on CS1 = GP47 | on CS1 = **GP8** | 8 MB on CS1 = GP47 |
+| SD (SPI0) | MOSI 35 / MISO 36 / SCK 34 / CS 39 | MOSI 7 / MISO 4 / SCK 6 / CS 5 | MOSI 3 / MISO 4 / SCK 2 / CS 5 |
+| UART console | UART0 on GP44/45 | **none** — GP0/1 are the Wii connector | board default (GP0/1) |
+
+`adafruitdvisd` is a Pico 2 footprint (breadboard or Frank's PCB) with the
+[Adafruit DVI Breakout 4984](https://www.adafruit.com/product/4984) on HSTX and
+the [MicroSD breakout 254](https://www.adafruit.com/product/254) on SPI0. **The
+module must be a Pimoroni Pico Plus 2**, not a stock Pico 2: Duke cannot run
+without PSRAM, and `HW_CONFIG 2` puts the PSRAM chip select on GP47 = QMI CS1,
+which only exists on an RP2350B. Its HSTX lanes are the only ones in this table
+that are *not* inverted — a garbled or absent picture there points at
+`GPIOHSTXINVERTED` first.
 
 Two consequences worth knowing on the Murmulator:
 
@@ -77,6 +90,8 @@ Requires `PICO_SDK_PATH` in the environment (SDK 2.2.0, arm-none-eabi-gcc
 ./fruitjam-build-forbootloader.sh        # -> build_bl_fruitjam/...
 ./murmulatorm2-build.sh                  # -> build_murmulatorm2/src/pico/duke3d_game.uf2
 ./murmulatorm2-build-forbootloader.sh    # -> build_bl_murmulatorm2/...
+./adafruitdvisd-build.sh                 # -> build_adafruitdvisd/src/pico/duke3d_game.uf2
+./adafruitdvisd-build-forbootloader.sh   # -> build_bl_adafruitdvisd/...
 ```
 
 A plain `cmake -S . -B build` (VSCode / CMake Tools) still configures for the
@@ -93,10 +108,13 @@ reset returns to the picker, as does quitting Duke.
 | Fruit Jam bootloader | `0x10080000` | 15.5 MB | 16 MB |
 | Murmulator standalone | `0x10000000` | — | 4 MB |
 | Murmulator bootloader | `0x10080000` | 3.5 MB | 4 MB |
+| Adafruit DVI+SD standalone | `0x10000000` | — | 16 MB |
+| Adafruit DVI+SD bootloader | `0x10080000` | 15.5 MB | 16 MB |
 
 Duke keeps **nothing** in flash — `DUKE3D.GRP` streams from SD and savegames sit
-next to it — so the whole partition goes to the app on both boards. See
-`cmake/BootPartition.cmake`.
+next to it — so the whole partition goes to the app on every board. Only the
+Murmulator needs the totals overridden (`-DDUKE_APP_SIZE` / `-DDUKE_FLASH_TOTAL`
+in its script); the other two match the defaults in `cmake/BootPartition.cmake`.
 
 Useful options:
 
@@ -115,7 +133,41 @@ Useful options:
 /roms/duke3d/duke3d.cfg      settings
 /emu/8/duke3d_game.uf2       bootloader variant, Fruit Jam
 /emu/13/duke3d_game.uf2      bootloader variant, Murmulator M2
+/emu/2/duke3d_game.uf2       bootloader variant, Adafruit DVI + SD
 ```
+
+## When something is wrong
+
+You do **not** need a serial cable to find out. The DOS-style startup screen is
+live on the HDMI output from the first line of boot, and anything fatal is
+painted on it under the log that led to it, with a red `FATAL ERROR` bar:
+
+```
+              FATAL ERROR
+ duke_fatfs: MOUNT FAILED (3)
+
+ *** FATAL ERROR ***
+ No SD card (FatFs error 3).
+ Insert a FAT/exFAT-formatted card with
+ DUKE3D.GRP in /roms/duke3d.
+
+ Press RESET (returns to the boot menu).
+```
+
+The board then **halts** rather than rebooting, so the message stays readable —
+every condition that gets here is permanent, and a reboot would only show it
+again too briefly to read. Reported this way:
+
+| | |
+|---|---|
+| No PSRAM, or too small for the engine arrays | `src/pico/duke_psram.c` |
+| No SD card, or not FAT/exFAT formatted | `src/pico/duke_fatfs_io.c` |
+| `/roms/duke3d` or `DUKE3D.GRP` missing | `src/pico/duke_fatfs_io.c` |
+| Corrupt or unrecognised GRP, CON errors, missing `TILES0xx.ART`, cache overflow, out of sound handles | engine/game `Error()` and `DUKE_FATAL_ABORT()` |
+
+In-game failures work too: the console keeps recording every `printf` after the
+game takes the screen, so a fatal mid-level brings it back with the last 24 lines
+of log still on it. See `src/pico/duke_fatal.c`.
 
 ## Controls
 
@@ -229,6 +281,7 @@ save — the slot shows blank. With a keyboard you can type a name at step 4.
 ```
 fruitjam_cflags.h              board config (HW_CONFIG 8), force-included at build
 murmulatorm2_cflags.h          board config (HW_CONFIG 13), likewise
+adafruitdvisd_cflags.h         board config (HW_CONFIG 2), likewise
 <tag>-build.sh                 standalone build for that board
 <tag>-build-forbootloader.sh   pico-bootLoader app-partition build
 CMakeLists.txt                 board selection + SDK init + driver subdirs + src/pico
@@ -238,11 +291,12 @@ cmake/psram_linker.cmake       generates the linker script: PSRAM region, engine
 cmake/BootPartition.cmake      bootloader flash map
 src/Engine/ src/Game/          vendored Chocolate Duke3D, edited in place
 src/pico/                      RP2350 platform layer (replaces BUILD's sdlayer.c)
-  duke_boot.c                  entry: clocks, PSRAM, SD, exit -> reset
+  duke_boot.c                  entry: clocks, PSRAM, video, SD, exit -> reset
   pico_display.c               BUILD baselayer: video, palette, timer, input entry
   duke_audio.c duke_music.c    dual-sink mixer + OPL2 music
   duke_usb_input.cpp           pad/keyboard -> DOS scancodes (table above)
   duke_dostext.cpp             DOS startup screen
+  duke_fatal.c                 fatal errors on that screen, then halt
   duke_fatfs_io.c              FatFs behind POSIX *and* newlib syscalls
 3rdparty/pico_shared_drivers   vendored pico_shared (HSTX/I2S/TLV320/PSRAM/SD/font)
 3rdparty/emu8950               OPL2 emulator

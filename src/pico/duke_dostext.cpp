@@ -62,7 +62,9 @@ static void ensure_cells(void)
 
 static void blit_cell(int col, int row, char c, uint16_t fg, uint16_t bg)
 {
-    if (!s_surface) return;
+    // No surface yet (pre-display) or the game owns the screen (post-retire):
+    // either way the grid is still maintained, only the pixels are skipped.
+    if (!s_surface || !s_active) return;
     // The font holds ASCII 32..126 only; anything else shows as a space.
     if (c < FONT_FIRST_ASCII || c >= FONT_FIRST_ASCII + FONT_N_CHARS) c = ' ';
     for (int y = 0; y < FONT_CHAR_HEIGHT; y++) {
@@ -77,22 +79,36 @@ static void blit_cell(int col, int row, char c, uint16_t fg, uint16_t bg)
     }
 }
 
+static const char *s_title = "Duke Nukem 3D";
+
 static void draw_header(void)
 {
-    static const char title[] = "Duke Nukem 3D";
+    if (!s_surface || !s_active) return;
     char bar[DOSTEXT_COLS];
     memset(bar, ' ', sizeof(bar));
-    int len = (int)strlen(title);
+    int len = (int)strlen(s_title);
+    if (len > DOSTEXT_COLS) len = DOSTEXT_COLS;
     int start = (DOSTEXT_COLS - len) / 2;
-    memcpy(bar + start, title, (size_t)len);
+    memcpy(bar + start, s_title, (size_t)len);
     for (int c = 0; c < DOSTEXT_COLS; c++)
         blit_cell(c, HEADER_ROW, bar[c], COL_HDR_FG, COL_HDR_BG);
+}
+
+void duke_dostext_set_title(const char *title)
+{
+    if (!title) return;
+    s_title = title;
+    draw_header();          // no-ops until a surface is attached and painting
 }
 
 // Redraw the scrolling region from s_cells. Used after a scroll, which is the
 // only case where more than one cell changes at a time.
 static void repaint_text(void)
 {
+    // Bail before the loop, not per cell: while the game owns the screen the
+    // grid still scrolls on every printf, and 960 no-op blit_cell calls a line
+    // is pure waste.
+    if (!s_surface || !s_active) return;
     for (int r = FIRST_TEXT_ROW; r < DOSTEXT_ROWS; r++)
         for (int c = 0; c < DOSTEXT_COLS; c++)
             blit_cell(c, r, s_cells[r][c], COL_FG, COL_BG);
@@ -111,6 +127,7 @@ void duke_dostext_init(uint16_t *surface, int stride)
     printf("dostext: %dx%d console up, %d backlog row(s) recovered\n",
            DOSTEXT_COLS, DOSTEXT_ROWS, used);
 
+    s_active  = true;        // blit_cell is gated on this — set before painting
     s_surface = surface;
     s_stride  = stride;
     if (s_surface) {
@@ -122,7 +139,26 @@ void duke_dostext_init(uint16_t *surface, int stride)
     }
     draw_header();
     repaint_text();          // replays the pre-init backlog
-    s_active = true;
+}
+
+// Re-arm over an already-initialised surface. Used by duke_fatal(), which has to
+// work both before the game has drawn anything and long after _nextpage() retired
+// the console. The grid is kept in both cases -- it is still being maintained
+// while retired (see duke_dostext_write) -- so the error always lands underneath
+// the last 24 lines of log that led to it.
+void duke_dostext_resume(uint16_t *surface, int stride)
+{
+    ensure_cells();
+    s_active  = true;         // re-enable blitting BEFORE repainting
+    s_surface = surface;
+    s_stride  = stride;
+    if (s_surface) {
+        for (int y = 0; y < DOSTEXT_ROWS * FONT_CHAR_HEIGHT; y++)
+            for (int x = 0; x < s_stride; x++)
+                s_surface[y * s_stride + x] = COL_BG;
+    }
+    draw_header();
+    repaint_text();
 }
 
 // Capture as a pico_stdio DRIVER rather than by overriding _write.
@@ -150,6 +186,8 @@ void duke_dostext_attach_stdio(void)
     stdio_set_driver_enabled(&s_dostext_driver, true);
 }
 
+// Stop PAINTING. The grid keeps being maintained (duke_dostext_write) so that
+// duke_fatal() can bring the console back later with real context on it.
 void duke_dostext_stop(void)
 {
     // Ignore stops that arrive before the console exists. The engine reaches
@@ -178,7 +216,11 @@ static void newline(void)
 
 void duke_dostext_write(const char *s, size_t len)
 {
-    if (!s_active) return;   // NOT gated on s_surface: see ensure_cells above
+    // Gated on NEITHER s_surface nor s_active: the grid is maintained for the
+    // whole run. Before the display exists that is the backlog duke_dostext_init
+    // replays; after the game takes the screen it is the last 24 lines of log,
+    // which is exactly the context duke_fatal() needs when an in-game failure
+    // brings the console back. blit_cell skips the pixels in both cases.
     ensure_cells();
 
     for (size_t i = 0; i < len; i++) {

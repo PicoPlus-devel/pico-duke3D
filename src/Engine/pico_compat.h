@@ -39,6 +39,18 @@
 #define PLATFORM_PICO 1
 #define PLATFORM_LITTLEENDIAN 1
 
+// Fatal-error reporting (src/pico/duke_fatal.c). There is no terminal on this
+// platform, so a fatal has to reach the HDMI output or the user learns nothing:
+// duke_fatal* paint the reason on the DOS console -- under the last lines of log
+// that led to it -- and halt.
+//
+// DUKE_FATAL_ABORT() replaces the engine's "printf the reason; getch(); exit(0)"
+// idiom, which on bare metal is a permanent silent hang: no registered stdio
+// driver has in_chars, so the key that getchar() waits for can never arrive.
+void duke_fatal(const char *fmt, ...) __attribute__((noreturn));
+void duke_fatal_halt(void) __attribute__((noreturn));
+#define DUKE_FATAL_ABORT() duke_fatal_halt()
+
 // BUILD allocation macros. The engine's large permanent allocations use
 // kkmalloc: the tile cache (tiles.c), the 64 KB translucency table and the
 // palette-lookup tables (engine.c). These do not fit the ~250 KB SRAM heap, so

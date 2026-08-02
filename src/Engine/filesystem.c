@@ -77,8 +77,7 @@ int32_t initgroupfile(const char  *filename)
     
     if (archive->fileDescriptor < 0){
         printf("Error: Unable to open file %s.\n",filename);
-        getchar();
-        exit(0);
+        DUKE_FATAL_ABORT();
     }
     
     
@@ -347,8 +346,7 @@ int32_t kread(int32_t handle, void *buffer, int32_t leng){
     
     if (!openFile->used){
         printf("Invalide handle. Unrecoverable error.\n");
-        getchar();
-        exit(0);
+        DUKE_FATAL_ABORT();
     }
     
     //FILESYSTEM ? OS takes care of it !
@@ -403,8 +401,7 @@ int32_t klseek(int32_t handle, int32_t offset, int whence){
 	
     if (!openFiles[handle].used){
         printf("Invalide handle. Unrecoverable error.\n");
-        getchar();
-        exit(0);
+        DUKE_FATAL_ABORT();
     }
     
     // FILESYSTEM ? OS will take care of it.
@@ -440,8 +437,7 @@ int32_t kfilelength(int32_t handle)
     
     if (!openFile->used){
         printf("Invalide handle. Unrecoverable error.\n");
-        getchar();
-        exit(0);
+        DUKE_FATAL_ABORT();
     }
     
     if (openFile->type == SYSTEM_FILE){
@@ -465,8 +461,7 @@ void kclose(int32_t handle)
     
     if (!openFile->used){
         printf("Invalide handle. Unrecoverable error.\n");
-        getchar();
-        exit(0);
+        DUKE_FATAL_ABORT();
     }
     
     if (openFile->type == SYSTEM_FILE){

@@ -92,9 +92,22 @@ static void __not_in_flash_func(duke_vsync_cb)(void)
 // ---------------------------------------------------------------------------
 // Platform init / video mode
 // ---------------------------------------------------------------------------
-void _platform_init(int argc, char **argv, const char *title, const char *iconName)
+// HSTX bring-up, split out of _platform_init and made idempotent.
+//
+// Two callers need it before Duke does. duke_boot's main() calls it right after
+// duke_psram_init() so the DOS console is on screen for the whole rest of the
+// boot -- without that, a failure in the PSRAM/SD/GRP stage printed to a UART
+// nobody has connected and left the HDMI output black (see duke_fatal.c). And
+// duke_fatal() itself calls it, so a fatal that somehow fires earlier still gets
+// a screen.
+//
+// Idempotence is not just for those: menues.c's "Toggle fullscreen" item calls
+// _platform_init() a SECOND time, which used to re-claim the ping/pong DMA
+// channels and re-launch core1 -- both hard panics.
+void duke_video_ensure_up(void)
 {
-    (void)argc; (void)argv; (void)title; (void)iconName;
+    if (s_video_up) return;
+
     // clk_hstx is configured to a fixed 126 MHz in duke_boot before we get here.
     assert(clock_get_hz(clk_hstx) == 126000000u);
     memset(s_pal555, 0, sizeof(s_pal555));
@@ -121,16 +134,41 @@ void _platform_init(int argc, char **argv, const char *title, const char *iconNa
     printf("pico_display: HSTX 640x480 up (clk_hstx=%lu)\n",
            (unsigned long)clock_get_hz(clk_hstx));
 
-    // Put Duke's DOS startup sequence on screen. This has to happen here and
-    // not later: Duke calls _platform_init() before Startup(), so from this
-    // point every "Using: 'DUKE3D.GRP'" / "Compiling: 'GAME.CON'" line the game
-    // prints is mirrored to the display as well as the UART. It renders into
-    // the RGB555 scanout surface directly, because no palette is loaded yet.
+    // Put Duke's DOS startup sequence on screen. Everything printed before this
+    // point -- the banner, the clock report, the PSRAM lines -- is held in the
+    // console's character grid and replayed here, so nothing is lost. From here
+    // on every "Using: 'DUKE3D.GRP'" / "Compiling: 'GAME.CON'" line is mirrored
+    // to the display as well as the UART. It renders into the RGB555 scanout
+    // surface directly, because no palette is loaded yet.
     duke_dostext_init(s_rgb, FB_W);
+}
+
+// Hand the RGB555 scanout surface back to the DOS console (duke_fatal). Lives
+// here because s_rgb is private to this file.
+void duke_display_console_resume(void)
+{
+    if (!s_video_up) return;
+    duke_dostext_resume(s_rgb, FB_W);
+}
+
+void _platform_init(int argc, char **argv, const char *title, const char *iconName)
+{
+    (void)argc; (void)argv; (void)title; (void)iconName;
+    // Normally already up: duke_boot's main() brings the display up before the
+    // SD card so boot failures are visible. Kept here so the engine still owns
+    // the ordering if that ever moves back.
+    duke_video_ensure_up();
 
     // USB host after video (fruitjam-doom order): gamepad + keyboard input.
-    extern void duke_usb_init(void);
-    duke_usb_init();
+    // Once only, for the same reason duke_video_ensure_up() is idempotent: the
+    // video menu's "Toggle fullscreen" re-enters here, and a second tuh_init()
+    // would re-initialise a running host stack.
+    static bool usb_up = false;
+    if (!usb_up) {
+        extern void duke_usb_init(void);
+        duke_usb_init();
+        usb_up = true;
+    }
 }
 
 void _uninitengine(void) { }
