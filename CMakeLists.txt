@@ -28,6 +28,13 @@ if (NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${DUKE_BOARD}_cflags.h")
 endif()
 message(STATUS "pico-duke3D board: ${DUKE_BOARD} (${DUKE_BOARD}_cflags.h)")
 
+# --- Version stamp ----------------------------------------------------------
+# Recorded in the UF2's binary info, so `picotool info duke3d_game.uf2` says
+# which release an image came from. The release workflow passes the tag through
+# CMAKE_ARGS (-DDUKE_RELEASE_VERSION=v1.0); an ordinary build stamps "dev".
+# Nothing tracked in the repository is rewritten to cut a release.
+set(DUKE_RELEASE_VERSION "dev" CACHE STRING "Version stamp recorded in the UF2 binary info")
+
 # --- Defaults so a plain `cmake -S . -B build` works ------------------------
 # (e.g. VSCode / CMake Tools, which does not pass the -D flags or CFLAGS that
 # fruitjam-build.sh sets). All are set only if not already provided, so the

@@ -125,6 +125,52 @@ Useful options:
 | `-DDUKE_OPL_RENDERER=linear` | cheaper OPL renderer (~half the cost, quality unvalidated on device); default is `reference` |
 | `-DDUKE_PSRAM_SIZE=4096k` | shrink the linker's PSRAM region (the runtime clamp usually makes this unnecessary) |
 
+## Cutting a release
+
+Releases are built by
+[.github/workflows/BuildAndRelease.yml](.github/workflows/BuildAndRelease.yml) on
+a self-hosted runner when a `v*` tag is pushed. The workflow is a thin wrapper:
+everything it does is `./buildAll.sh` and `./release-notes.sh`, so running those
+two scripts locally *is* testing the pipeline.
+
+```sh
+./buildAll.sh                    # fills releases/ -- exactly what CI runs
+./release-notes.sh v1.0          # writes release-notes.md, the release body
+```
+
+`buildAll.sh` builds the standalone variant for all three boards and renames each
+`duke3d_game.uf2` to `duke3d_game_<board>.uf2` — three files, and that is the
+whole release. There is no data file to ship: `DUKE3D.GRP` streams from the SD
+card, so nothing lives in flash beside the image.
+
+The pico-bootLoader variants are **not** released here. They are built in the
+[pico-bootLoader](https://github.com/fhoedemakers/pico-bootLoader) repository,
+which invokes `<board>-build-forbootloader.sh` itself and links each image into
+its own app partition.
+
+Boards, human-readable names and the caveats printed in the notes all come from
+[boards.sh](boards.sh), sourced by both scripts, so the artifacts and the
+"what do I flash?" table cannot drift apart. Adding a board to a release is one
+line there once its `<tag>_cflags.h` and `<tag>-build.sh` exist.
+
+`CMAKE_ARGS="-DDUKE_RELEASE_VERSION=v1.0"` stamps the tag into the UF2's binary
+info; `buildAll.sh` prints `picotool info` for every artifact so the stamp is
+visible in the CI log. An ordinary build stamps `dev`, and no tracked file is
+rewritten to cut a release.
+
+The runner needs `PICO_SDK_PATH` and `PICO_PIO_USB_PATH` (set in the workflow to
+`/datalocal/pico/...`), plus `picotool` ≥ 2.2.0, `ninja` and `arm-none-eabi-gcc`
+on `PATH`. The SDK must be 2.2.0 with its own `lib/tinyusb` checked out;
+`buildAll.sh` checks all of this up front rather than failing deep inside CMake.
+
+### Steps
+
+1. Add a `## vX.Y` section to [CHANGELOG.md](CHANGELOG.md) — the heading text
+   must be exactly the tag, since `release-notes.sh` extracts that section.
+2. Commit, then dry-run on the runner without publishing anything:
+   `gh workflow run BuildAndRelease.yml` (leave the `tag` input empty).
+3. `git tag vX.Y && git push origin vX.Y`.
+
 ## SD card
 
 ```
@@ -324,6 +370,8 @@ murmulatorm2_cflags.h          board config (HW_CONFIG 13), likewise
 adafruitdvisd_cflags.h         board config (HW_CONFIG 2), likewise
 <tag>-build.sh                 standalone build for that board
 <tag>-build-forbootloader.sh   pico-bootLoader app-partition build
+boards.sh                      which boards a release covers, and their metadata
+buildAll.sh release-notes.sh   the release pipeline; CI runs exactly these two
 CMakeLists.txt                 board selection + SDK init + driver subdirs + src/pico
 cmake/psram_linker.cmake       generates the linker script: PSRAM region, engine
                                .bss -> PSRAM, audio path -> SRAM, stack carve-out,

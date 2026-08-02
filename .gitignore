@@ -6,6 +6,9 @@ build/
 *.dis
 *.hex
 .DS_Store
+# Output of ./buildAll.sh and ./release-notes.sh (a local release rehearsal).
+/releases/
+/release-notes.md
 *.wav
 *.GRP
 *.grp

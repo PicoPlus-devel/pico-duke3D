@@ -218,4 +218,9 @@ endif()
 
 duke_use_psram_linker_script(duke3d_game)
 
+# Stamp the release version into the binary info, so `picotool info` on a UF2
+# names the release it came from. "dev" unless -DDUKE_RELEASE_VERSION is passed,
+# which is what buildAll.sh does under CI (see CMakeLists.txt).
+pico_set_program_version(duke3d_game "${DUKE_RELEASE_VERSION}")
+
 pico_add_extra_outputs(duke3d_game)
