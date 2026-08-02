@@ -235,6 +235,20 @@ int loadpheader(uint8_t  spot,int32 *vn,int32 *ln,int32 *psk,int32 *nump)
 #define DUKE_SCRIPTPTRS_STATIC
 #endif
 
+#ifdef PLATFORM_PICO
+// Queried by the pad layer (src/pico/duke_usb_input.cpp). In the NES gamepad
+// layout the same button has to send Left Ctrl (fire) in game and Enter
+// (confirm) in a menu, so it needs to know which is up. Not the in_menu global:
+// that one is only refreshed inside playback() (game.c), i.e. on the title/demo
+// loop, so it is stale for the whole of a level. MODE_TYPE is folded in so that
+// typing a message counts as "in a menu" too -- otherwise the pad would fire
+// while the player types.
+int duke_menu_is_active(void)
+{
+    return (ps[myconnectindex].gm & (MODE_MENU|MODE_TYPE)) != 0;
+}
+#endif
+
 int loadplayer(int8_t spot)
 {
      short k,music_changed;
@@ -2796,7 +2810,11 @@ else
 
             onbar = 0;
 
+#ifdef PLATFORM_PICO
+			x = probe(c+6,43,16,8);   // one extra row: NES PAD
+#else
 			x = probe(c+6,43,16,7);
+#endif
 
             switch(x)
             {
@@ -2834,6 +2852,15 @@ else
                     cmenu(10000); 
 #endif
                     break;
+#ifdef PLATFORM_PICO
+				case 7: // four-button NES gamepad layout
+					NesPadLayout = !NesPadLayout;
+					// That layout has no button left over for Run, so it leans
+					// on Duke's own AutoRun (CONFIG_ReadSetup forces the same
+					// thing at startup).
+					if(NesPadLayout) ud.auto_run = 1;
+					break;
+#endif
 
 			}
 
@@ -2878,6 +2905,18 @@ else
             menutext(c,43+16*6,SHX(-9),1,"PARENTAL LOCK");
 #endif
 
+#ifdef PLATFORM_PICO
+			menutext(c,43+16*7,SHX(-3),PHX(-3),"NES PAD");
+			menutext(c+160+40,43+16*7,0,0,NesPadLayout?"ON":"OFF");
+			// probe() returns -probey-2 while idling on a row, so -9 is row 7.
+			if(x == -9)
+			{
+				if(NesPadLayout)
+					gametext(320>>1,43+16*8+4,"*** SELECT+START OPENS THE MENU ***",0,2+8+16);
+				else
+					gametext(320>>1,43+16*8+4,"*** FOR A 4-BUTTON NES CONTROLLER ***",0,2+8+16);
+			}
+#endif
 
 			break;
 

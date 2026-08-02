@@ -36,6 +36,7 @@ extern int32_t ScreenMode;
 extern int32 ScreenWidth;
 extern int32 ScreenHeight;
 extern int32_t BFullScreen;
+extern int32_t NesPadLayout;
 
 void CONFIG_ReadSetup( void );
 void CONFIG_GetSetupFilename( void );

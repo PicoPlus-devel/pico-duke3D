@@ -177,6 +177,12 @@ to `pico_display_post_key()` → Duke's `keyhandler()`, which updates both
 one table drives menu navigation *and* gameplay, and a gamepad button is
 indistinguishable from the key it stands for.
 
+There are **two gamepad layouts**, switched by the **NES PAD** option in
+*Options → Game Options*: the six-button SNES one below, and a four-button
+[NES layout](#nes-pad-layout) for a vintage NES controller or a NES-shelled
+MantaPad. The setting persists in `duke3d.cfg` as `Misc/NesPadLayout` and
+applies to every pad at once — USB and the legacy ports alike.
+
 ### Gamepad
 
 Up to two pads. `hid_app.cpp` folds the D-pad hat and the left analogue stick
@@ -201,8 +207,42 @@ Two notes on that table:
   convention, START-as-menu is the DOS one.
 * **`C` does not exist on a SNES-shaped pad**, so crouch is currently unreachable
   on one. Every other action has a button. To put crouch on a SNES pad, move it
-  onto `B` (which duplicates START anyway) — one line in `padmap[]` in
+  onto `B` (which duplicates START anyway) — one line in `snesLayout()` in
   `src/pico/duke_usb_input.cpp`.
+
+#### NES pad layout
+
+Turn **NES PAD** on in *Options → Game Options*. A NES controller has four
+buttons and Duke needs fire, open, jump, crouch, weapons, strafe and the menu, so
+**SELECT is a shift layer** rather than a button of its own — it does nothing on
+its own, which means there is no press-versus-hold to get wrong.
+
+| | base | SELECT held |
+|---|---|---|
+| **A** | **fire** (Left Ctrl) | next weapon (`'`) |
+| **B** | open / use (Space) | crouch (`Z`) |
+| **START** | jump (`A`) | **open the menu** (Escape) |
+| **D-pad ←→** | turn | strafe left / right (`,` `.`) |
+| **D-pad ↑↓** | move forward / back | move forward / back |
+
+In a menu the layer is ignored: **A** confirms, **B** and **START** go back, the
+D-pad navigates. That is why `menues.c` needs no changes of its own — `probe()`
+already takes Enter to confirm and Escape to go back.
+
+Three things worth knowing:
+
+* **No Run button is left**, so switching the option on also turns Duke's own
+  **AutoRun** on, and `CONFIG_ReadSetup` re-forces it at every startup. You are
+  always running.
+* Both face-button pairs are accepted as the NES A/B, so the layout works from a
+  SNES-shaped pad too — there **B** and **Y** sit where a NES pad's buttons are.
+  (A NES-shelled MantaPad reports its buttons on io `A` and io `X`; a NES pad in
+  a DE-9 port arrives on io `B` and io `Y`.)
+* A button already held when the menu opens or closes, or when the SELECT layer
+  goes up or down, is **ignored until you let go** of it — otherwise chording the
+  menu open while firing would confirm the highlighted item on the next poll.
+  Same when the option itself is toggled: you are pressing A at that moment, and
+  A means something different on the other side of the switch.
 
 #### MantaPad (cheap AliExpress SNES pad, VID 081f)
 
@@ -219,20 +259,20 @@ SNES mode via `MANTAPAD_DEFAULT_SNES_MODE` in the board cflags header. The boot
 log reads `defaulting to SNES mode` instead of `Press Y to activate SNES mode`,
 and X is fire from the first frame — no Y press, no level restart.
 
-### NES/SNES controller ports (Murmulator M2 only)
+### NES/SNES controller ports (Murmulator M2 and Adafruit DVI-SD)
 
-The M2's two DE-9 ports are polled over PIO by the vendored `pico_shared` nespad
-driver and folded into the **same** scancode stream as the USB pads, so a **SNES
-pad in a port behaves exactly like a USB SNES pad** — the table above applies
-unchanged, one mapping to reason about. Both ports are OR-ed together, so two
-pads drive one Duke.
+Those boards' two DE-9 ports are polled over PIO by the vendored `pico_shared`
+nespad driver and folded into the **same** scancode stream as the USB pads, so a
+**SNES pad in a port behaves exactly like a USB SNES pad** — the tables above
+apply unchanged, one set of layouts to reason about. Both ports are OR-ed
+together, so two pads drive one Duke.
 
-A **plain NES pad has no fire button here.** Its two buttons report in the SNES
-serial positions B and Y, which this port maps to Escape and Space; fire lives on
-SNES **X**, which a NES pad does not have. The driver masks the ID bits that
-distinguish the two pad shapes before the game sees them, so it cannot be
-detected and corrected at runtime — use a SNES pad, or edit `nesToButtons()` in
-`src/pico/duke_usb_input.cpp`.
+A **plain NES pad has no fire button in the default layout.** Its two buttons
+report in the SNES serial positions B and Y, which that layout maps to Escape and
+Space; fire lives on SNES **X**, which a NES pad does not have. The driver masks
+the ID bits that distinguish the two pad shapes before the game sees them, so it
+cannot be detected and corrected at runtime — that is exactly what the
+[NES PAD option](#nes-pad-layout) is for.
 
 USB input still works alongside the ports, through the RP2350's native USB
 controller — a pad or keyboard needs an OTG/host adapter on the module's own

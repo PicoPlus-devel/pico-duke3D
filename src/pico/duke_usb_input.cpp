@@ -8,8 +8,15 @@
 //  (menus) and CONTROL_UpdateKeyboardState (in-game bindings) — so one mapping
 //  drives menu navigation AND gameplay.
 //
-//  Pad mapping (hid_app folds D-pad hat + left stick into the direction bits).
-//  Full table, the SNES-pad caveat and the save/load procedure: see README.md.
+//  There are two layouts, picked live by the NES PAD option in GAME OPTIONS
+//  (NesPadLayout, Game/config.c). Both produce an *effective set* of scancodes
+//  which is diffed once per poll, so a scancode reached from two buttons -- or
+//  from two different buttons before and after a layout change -- can never be
+//  released while something still asks for it.
+//
+//  Default layout, six-button SNES (hid_app folds the D-pad hat and the left
+//  stick into the direction bits). Full table and the save/load procedure: see
+//  README.md.
 //    D-pad/stick  -> arrow keys        (menu nav + move/turn)
 //    A            -> Enter             (menu select; also accepts a save name)
 //    B            -> Escape            (menu back / menu open)
@@ -22,6 +29,21 @@
 //    C            -> Z key             (crouch -- NOT present on a SNES pad, so
 //                                       crouch is unreachable on one; move it to
 //                                       B if wanted, B duplicates START)
+//
+//  NES layout, four buttons. Duke needs fire, open, jump, crouch, weapons,
+//  strafe and the menu, which is more than four, so SELECT is a shift layer
+//  rather than a button of its own -- it emits nothing by itself, which means
+//  there is no press-versus-hold to tell apart.
+//                    base                 SELECT held
+//    A               fire  (LeftControl)  next weapon (')
+//    B               open  (Space)        crouch      (Z)
+//    START           jump  (A key)        MENU        (Escape)
+//    D-pad left/rt   turn  (arrows)       strafe      (, and .)
+//    D-pad up/down   move  (arrows)       move        (arrows, unchanged)
+//  In a menu the layer is ignored: A -> Enter, B and START -> Escape, D-pad ->
+//  arrows. That is what keeps menues.c untouched -- probe() already takes Enter
+//  to confirm and Escape to go back. There is no button left for Run, so
+//  enabling the option forces Duke's own AutoRun on (see Game/config.c).
 //
 //  MantaPad note: that pad boots in NES mode, where only two face buttons are
 //  reported and its "NES B" is physically the SNES X -- so X arrived as logical
@@ -39,6 +61,7 @@
 //                 into the same scancode stream as the USB pads.
 //
 #include <stdio.h>
+#include <stdint.h>
 
 #include "pico/stdlib.h"
 #include "tusb.h"
@@ -78,6 +101,13 @@ extern "C" {
 void pico_display_post_key(uint8_t rawcode);   // pico_display.c -> keyhandler()
 void duke_usb_init(void);
 void duke_usb_poll(void);
+
+// The NES PAD option in GAME OPTIONS, read live so the layout changes the
+// moment it is toggled (Game/config.c, persisted as Misc/NesPadLayout).
+extern int32_t NesPadLayout;
+// Game/menues.c. The NES layout needs this because one button has to mean fire
+// in game and confirm in a menu.
+int duke_menu_is_active(void);
 }
 
 // DOS scancodes (values from Game/src/keyboard.h; arrows are Duke's remapped
@@ -92,6 +122,9 @@ namespace sc
     constexpr uint8_t KeyZ   = 0x2c;
     constexpr uint8_t LAlt   = 0x38;
     constexpr uint8_t Space  = 0x39;
+    constexpr uint8_t Quote  = 0x28;   // Next_Weapon
+    constexpr uint8_t Comma  = 0x33;   // Strafe_Left
+    constexpr uint8_t Period = 0x34;   // Strafe_Right
     constexpr uint8_t Up     = 0x5a;
     constexpr uint8_t Down   = 0x6a;
     constexpr uint8_t Left   = 0x6b;
@@ -100,39 +133,146 @@ namespace sc
 
 namespace
 {
-    struct PadMap { uint32_t button; uint8_t scancode; };
-
-    // io::GamePadState::Button bit -> scancode. (The direction bits use the
-    // high bits incl. 1<<31, so cast through uint32_t.)
+    // io::GamePadState::Button bit as a uint32_t. (The direction bits use the
+    // high bits incl. 1<<31, so they have to be cast.)
     constexpr uint32_t B(int v) { return static_cast<uint32_t>(v); }
-    constexpr PadMap padmap[] = {
-        { B(io::GamePadState::Button::UP),     sc::Up     },
-        { B(io::GamePadState::Button::DOWN),   sc::Down   },
-        { B(io::GamePadState::Button::LEFT),   sc::Left   },
-        { B(io::GamePadState::Button::RIGHT),  sc::Right  },
-        { B(io::GamePadState::Button::A),      sc::Return },
-        { B(io::GamePadState::Button::B),      sc::Escape },
-        { B(io::GamePadState::Button::START),  sc::Escape },
-        { B(io::GamePadState::Button::X),      sc::LCtrl  },
-        { B(io::GamePadState::Button::Y),      sc::Space  },
-        { B(io::GamePadState::Button::L),      sc::LShift },
-        { B(io::GamePadState::Button::R),      sc::LAlt   },
-        { B(io::GamePadState::Button::SELECT), sc::KeyA   },
-        { B(io::GamePadState::Button::C),      sc::KeyZ   },
-    };
 
-    void postPadDiff(uint32_t cur, uint32_t prev)
+    // Every scancode a layout can produce. A layout returns a set of these
+    // rather than posting keys itself, which is what lets one scancode be
+    // reached from several buttons -- B and START both mean Escape, and A means
+    // Enter or Left Ctrl depending on whether a menu is up -- without a release
+    // from one source cancelling a press that another source still holds.
+    enum ScIdx {
+        SC_UP, SC_DOWN, SC_LEFT, SC_RIGHT,
+        SC_RETURN, SC_ESCAPE, SC_LCTRL, SC_SPACE,
+        SC_LSHIFT, SC_LALT, SC_KEYA, SC_KEYZ,
+        SC_QUOTE, SC_COMMA, SC_PERIOD,
+        SC_COUNT
+    };
+    constexpr uint8_t kScancode[SC_COUNT] = {
+        sc::Up,     sc::Down,   sc::Left,  sc::Right,
+        sc::Return, sc::Escape, sc::LCtrl, sc::Space,
+        sc::LShift, sc::LAlt,   sc::KeyA,  sc::KeyZ,
+        sc::Quote,  sc::Comma,  sc::Period,
+    };
+    constexpr uint32_t K(ScIdx i) { return 1u << i; }
+
+    void postKeyDiff(uint32_t cur)
     {
-        // A scancode can be reached from two buttons (B and START -> Escape):
-        // compute the effective per-scancode state, then diff.
-        for (const auto &m : padmap)
+        static uint32_t prev = 0;
+        const uint32_t changed = cur ^ prev;
+        if (!changed) return;
+        for (int i = 0; i < SC_COUNT; i++)
         {
-            if ((cur ^ prev) & m.button)
-            {
-                bool down = (cur & m.button) != 0;
-                pico_display_post_key(down ? m.scancode : (m.scancode | 0x80));
-            }
+            const uint32_t bit = 1u << i;
+            if (changed & bit)
+                pico_display_post_key((cur & bit) ? kScancode[i]
+                                                  : (kScancode[i] | 0x80));
         }
+        prev = cur;
+    }
+
+    constexpr uint32_t kDirButtons =
+        B(io::GamePadState::Button::UP)   | B(io::GamePadState::Button::DOWN) |
+        B(io::GamePadState::Button::LEFT) | B(io::GamePadState::Button::RIGHT);
+
+    uint32_t arrowKeys(uint32_t b)
+    {
+        using Button = io::GamePadState::Button;
+        uint32_t k = 0;
+        if (b & B(Button::UP))    k |= K(SC_UP);
+        if (b & B(Button::DOWN))  k |= K(SC_DOWN);
+        if (b & B(Button::LEFT))  k |= K(SC_LEFT);
+        if (b & B(Button::RIGHT)) k |= K(SC_RIGHT);
+        return k;
+    }
+
+    // The stock six-button layout (see the table at the top of this file).
+    uint32_t snesLayout(uint32_t b)
+    {
+        using Button = io::GamePadState::Button;
+        uint32_t k = arrowKeys(b);
+        if (b & B(Button::A))      k |= K(SC_RETURN);
+        if (b & B(Button::B))      k |= K(SC_ESCAPE);
+        if (b & B(Button::START))  k |= K(SC_ESCAPE);
+        if (b & B(Button::X))      k |= K(SC_LCTRL);
+        if (b & B(Button::Y))      k |= K(SC_SPACE);
+        if (b & B(Button::L))      k |= K(SC_LSHIFT);
+        if (b & B(Button::R))      k |= K(SC_LALT);
+        if (b & B(Button::SELECT)) k |= K(SC_KEYA);
+        if (b & B(Button::C))      k |= K(SC_KEYZ);
+        return k;
+    }
+
+    enum { NES_A = 1 << 0, NES_B = 1 << 1, NES_SELECT = 1 << 2, NES_START = 1 << 3 };
+
+    // The four-button layout (see the table at the top of this file).
+    uint32_t nesLayout(uint32_t b)
+    {
+        using Button = io::GamePadState::Button;
+
+        // Fold the pad down to the four buttons a NES controller actually has.
+        // A NES-shelled MantaPad in SNES mode reports its A on io A and its B
+        // on io X (NESB == X in hid_app.cpp); a real NES pad in a DE-9 port
+        // arrives through nesToButtons() on io B and io Y, the SNES serial
+        // positions. Accept both pairs, which also makes the layout usable from
+        // a SNES-shaped pad -- there B and Y sit where a NES pad's buttons are.
+        int nes = 0;
+        if (b & (B(Button::A) | B(Button::B))) nes |= NES_A;
+        if (b & (B(Button::X) | B(Button::Y))) nes |= NES_B;
+        if (b & B(Button::SELECT))             nes |= NES_SELECT;
+        if (b & B(Button::START))              nes |= NES_START;
+
+        const bool in_menu = duke_menu_is_active() != 0;
+        const bool layer   = (nes & NES_SELECT) != 0;
+
+        // A button already down when the menu opens or closes, or when the
+        // SELECT layer goes up or down, would immediately act out its new
+        // meaning: chording the menu open while firing would confirm the
+        // highlighted item on the very next poll, and letting go of SELECT with
+        // A still held would start firing. Ignore whatever is held across such
+        // a transition until it is released. This doubles as the chord
+        // suppressor -- pressing SELECT is itself a transition, so START cannot
+        // slip a stray Jump in on the way into SELECT+START.
+        static int8_t was_state = -1;
+        static int held_over = 0;
+        const int8_t state = (in_menu ? 1 : 0) | (layer ? 2 : 0);
+        if (was_state != state)
+        {
+            was_state = state;
+            held_over = nes;
+        }
+        held_over &= nes;
+        const int a = nes & ~held_over;
+
+        uint32_t k = arrowKeys(b);
+        if (in_menu)
+        {
+            // The layer is ignored here: a menu only needs confirm and back,
+            // and probe() already takes Enter for one and Escape for the other,
+            // so menues.c needs no changes of its own.
+            if (a & NES_A)     k |= K(SC_RETURN);
+            if (a & NES_B)     k |= K(SC_ESCAPE);
+            if (a & NES_START) k |= K(SC_ESCAPE);
+        }
+        else if (layer)
+        {
+            if (a & NES_A)     k |= K(SC_QUOTE);    // next weapon
+            if (a & NES_B)     k |= K(SC_KEYZ);     // crouch
+            if (a & NES_START) k |= K(SC_ESCAPE);   // open the menu
+            // Left/right strafe instead of turning; up/down still move, so the
+            // layer can be held while walking.
+            k &= ~(K(SC_LEFT) | K(SC_RIGHT));
+            if (b & B(Button::LEFT))  k |= K(SC_COMMA);
+            if (b & B(Button::RIGHT)) k |= K(SC_PERIOD);
+        }
+        else
+        {
+            if (a & NES_A)     k |= K(SC_LCTRL);    // fire
+            if (a & NES_B)     k |= K(SC_SPACE);    // open / use
+            if (a & NES_START) k |= K(SC_KEYA);     // jump
+        }
+        return k;
     }
 
 #if DUKE_HAS_NESPAD
@@ -199,15 +339,16 @@ namespace
 
     // nespad_states_ext is in SNES serial order; translate it into the same
     // io::GamePadState::Button bits the USB pads produce, so a SNES pad in a
-    // Murmulator port behaves EXACTLY like a USB SNES pad and there is one
-    // mapping table (padmap above) to reason about.
+    // Murmulator port behaves EXACTLY like a USB SNES pad and there is one set
+    // of layouts (snesLayout/nesLayout above) to reason about.
     //
     // A plain NES pad only populates bits 0-7 — as A,B,Select,Start,dpad, which
-    // land on SNES B,Y,Select,Start. So it gets menu/back (A), open-use (B),
-    // jump (Select), menu (Start) and movement, but NO fire: fire lives on
-    // SNES X, which a NES pad does not have. The driver masks the ID bits that
-    // would distinguish the two pad shapes before we see them, so this cannot
-    // be auto-corrected here — use a SNES pad, or edit this table.
+    // land on SNES B,Y,Select,Start. Under the default layout that leaves it
+    // with menu/back (A), open-use (B), jump (Select), menu (Start) and
+    // movement, but NO fire: fire lives on SNES X, which a NES pad does not
+    // have. The driver masks the ID bits that would distinguish the two pad
+    // shapes before we see them, so it cannot be detected and corrected here —
+    // that is what the NES PAD option in GAME OPTIONS is for.
     uint32_t nesToButtons(uint16_t nes)
     {
         using Button = io::GamePadState::Button;
@@ -230,27 +371,40 @@ namespace
 
     void pollGamePads()
     {
-        // Slots 0/1 are the USB pads; slot 2 is both NES/SNES ports merged
-        // (they are OR-ed by nesButtons, so two players share one Duke).
-        static uint32_t prev[3] = {0, 0, 0};
+        // Every source is OR-ed into one button word: the two USB pads, plus
+        // both NES/SNES ports on the boards that have them (nesButtons already
+        // merges those two). So several pads drive one Duke, and a button held
+        // on one of them stays held even as another releases the same button.
+        uint32_t buttons = 0;
         for (int i = 0; i < 2; i++)
         {
             auto &gp = io::getCurrentGamePadState(i);
-            uint32_t cur = gp.isConnected() ? gp.buttons : 0;
-            if (cur != prev[i])
-            {
-                postPadDiff(cur, prev[i]);
-                prev[i] = cur;
-            }
+            if (gp.isConnected()) buttons |= gp.buttons;
         }
 #if DUKE_HAS_NESPAD
-        const uint32_t nes = nesToButtons(nesButtons());
-        if (nes != prev[2])
-        {
-            postPadDiff(nes, prev[2]);
-            prev[2] = nes;
-        }
+        buttons |= nesToButtons(nesButtons());
 #endif
+
+        // The only way to change layout is to press A on the menu item, so a
+        // button is always still held at the switch -- and it means something
+        // different on the other side of it. Report nothing until every button
+        // has been let go. The D-pad stays live: it navigates and moves the
+        // same way in both layouts.
+        static int8_t prev_layout = -1;
+        static bool settling = false;
+        const int8_t layout = NesPadLayout ? 1 : 0;
+        if (prev_layout != layout)
+        {
+            prev_layout = layout;
+            settling = true;
+        }
+        if (settling)
+        {
+            if (buttons & ~kDirButtons) buttons &= kDirButtons;
+            else settling = false;
+        }
+
+        postKeyDiff(layout ? nesLayout(buttons) : snesLayout(buttons));
     }
 
     // USB keyboards work alongside the pad. HID usage (page 0x07) -> DOS set-1
