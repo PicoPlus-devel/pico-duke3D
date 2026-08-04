@@ -51,6 +51,8 @@ extern void    kclose(int32_t handle);
 
 static OPL *s_opl = 0;
 static int  s_music_up = 0;
+// Duke's music slider (0..255), applied linearly to the rendered output and
+// nowhere else — see MUSIC_SetVolume for why it must not also reach the chip.
 static int  s_volume = 255;
 
 // ---------------------------------------------------------------------------
@@ -204,11 +206,12 @@ extern void OPL_calc_buffer_stereo(OPL *opl, int32_t *buffer, uint32_t nsamples)
 // 16.16 step: how many chip samples advance per output sample.
 #define RESAMP_STEP ((uint32_t)(((uint64_t)DUKE_OPL_NATIVE_RATE << 16) / DUKE_SINK_RATE))
 
-// Output gain, as a left shift. 3 (=8x) is the tuned value; more than this
-// hard-clips percussion transients. Music is summed into multivoc's SFX
-// division, so if loud SFX over loud music clips, drop this to 2 rather than
-// touching the SFX path. Watch the `clip` counter in the DUKE_VIDEO_DIAG
-// audio report when changing it.
+// Output gain, as a left shift. 3 (=8x) is the tuned value and there is no room
+// above it: rendered on the host harness with the slider at maximum, the seven
+// shareware songs peak between -14.0 dBFS (THECALL) and -3.8 dBFS (GRABBAG, the
+// hottest), so 16x would clip Grabbag's ensemble by 4 dB. If the music+SFX sum
+// clips, lower this to 2 rather than touching the SFX path, and watch the `clip`
+// counter in the DUKE_VIDEO_DIAG audio report.
 #ifndef DUKE_MUSIC_GAIN_SHIFT
 #define DUKE_MUSIC_GAIN_SHIFT 3
 #endif
@@ -342,12 +345,21 @@ int MUSIC_Shutdown(void)
 }
 
 void MUSIC_SetMaxFMMidiChannel(int channel) { AL_SetMaxMidiChannel(channel); }
+
+// The music slider scales the rendered output (see duke_music_mix) and NOTHING
+// ELSE. It must not also go to MIDI_SetVolume: with no SetVolume entry in our
+// midifuncs, midi.c implements a total volume by scaling every channel's CC7
+// and sending it to al_midi.c, which lands in the OPL's TL registers — a
+// LOG-domain attenuation. Doing both stacked two volume controls, and because
+// the OPL one is logarithmic the cost was far worse than the ratio suggests:
+// measured on GRABBAG.MID via the host harness, the default slider of 200/255
+// (nominally -2.1 dB) actually threw away 6.9 dB, for -9.0 dB total. That is
+// what made the music too quiet to sit against the SFX.
 void MUSIC_SetVolume(int volume)
 {
     if (volume < 0) volume = 0;
     if (volume > 255) volume = 255;
     s_volume = volume;
-    MIDI_SetVolume(volume);
 }
 void MUSIC_SetMidiChannelVolume(int channel, int volume) { MIDI_SetUserChannelVolume(channel, volume); }
 void MUSIC_ResetMidiChannelVolumes(void) { MIDI_ResetUserChannelVolume(); }
