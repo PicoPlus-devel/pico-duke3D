@@ -1268,6 +1268,21 @@ void bar(int x,int y,short *p,short dainc,uint8_t  damodify,short s, short pa)
 int32 volnum,levnum,plrskl,numplr;
 short lastsavedpos = -1;
 
+#ifdef PLATFORM_PICO
+// GAMEPAD SETUP (menu 707). The value column starts at c+160+40 = x240, where
+// menu 701 proves six glyphs fit ("FREE'D") and no more, so keep these short.
+static char *padlayoutname[PADLAYOUT_COUNT] = { "SNES", "NES", "RETRO" };
+// Two gametext lines per layout. Small font, so ~50 characters is the limit.
+static char *padlayouthelp[PADLAYOUT_COUNT][2] = {
+	{ "*** SIX-BUTTON PAD: X FIRES, Y USES ***",
+	  "*** SELECT JUMPS, B OR START OPENS THE MENU ***" },
+	{ "*** FOUR-BUTTON NES PAD: A FIRES, B USES ***",
+	  "*** HOLD SELECT TO SHIFT, +START FOR THE MENU ***" },
+	{ "*** RETRO-GO: A FIRES, B JUMPS, X CROUCHES ***",
+	  "*** START USES, L+R OPENS THE MENU ***" },
+};
+#endif
+
 void dispnames(void)
 {
     short x, c = 160;
@@ -2811,7 +2826,7 @@ else
             onbar = 0;
 
 #ifdef PLATFORM_PICO
-			x = probe(c+6,43,16,8);   // one extra row: NES PAD
+			x = probe(c+6,43,16,8);   // one extra row: GAMEPAD SETUP
 #else
 			x = probe(c+6,43,16,7);
 #endif
@@ -2853,12 +2868,8 @@ else
 #endif
                     break;
 #ifdef PLATFORM_PICO
-				case 7: // four-button NES gamepad layout
-					NesPadLayout = !NesPadLayout;
-					// That layout has no button left over for Run, so it leans
-					// on Duke's own AutoRun (CONFIG_ReadSetup forces the same
-					// thing at startup).
-					if(NesPadLayout) ud.auto_run = 1;
+				case 7:
+					cmenu(707); // gamepad setup
 					break;
 #endif
 
@@ -2906,16 +2917,7 @@ else
 #endif
 
 #ifdef PLATFORM_PICO
-			menutext(c,43+16*7,SHX(-3),PHX(-3),"NES PAD");
-			menutext(c+160+40,43+16*7,0,0,NesPadLayout?"ON":"OFF");
-			// probe() returns -probey-2 while idling on a row, so -9 is row 7.
-			if(x == -9)
-			{
-				if(NesPadLayout)
-					gametext(320>>1,43+16*8+4,"*** SELECT+START OPENS THE MENU ***",0,2+8+16);
-				else
-					gametext(320>>1,43+16*8+4,"*** FOR A 4-BUTTON NES CONTROLLER ***",0,2+8+16);
-			}
+			menutext(c,43+16*7,SHX(-7),PHX(-7),"GAMEPAD SETUP...");
 #endif
 
 			break;
@@ -3336,6 +3338,55 @@ else
 			menutext(c+160+40,43+16*5,0,0,(ud.tickrate&1)?"ON":"OFF");
 
 			break;
+
+#ifdef PLATFORM_PICO
+		case 707: // gamepad setup, from menu 702
+			c = (320>>1)-120;
+			rotatesprite(320<<15,19<<16,65536L,0,MENUBAR,16,0,10,0,0,xdim-1,ydim-1);
+			menutext(320>>1,24,0,0,"GAMEPAD SETUP");
+
+			onbar = 0;
+
+			x = probe(c+6,43,16,2);
+
+			switch(x)
+			{
+				case -1:
+					cmenu(702);
+					probey = 7; // back onto the GAMEPAD SETUP row
+					break;
+
+				case 0:
+					PadLayout = (PadLayout + 1) % PADLAYOUT_COUNT;
+					// Only the default layout has a button to spare for Run, so
+					// the others lean on Duke's own AutoRun (CONFIG_ReadSetup
+					// forces the same thing at startup).
+					if(PadLayout) ud.auto_run = 1;
+					break;
+
+				case 1:
+					PadShiftLayer = !PadShiftLayer;
+					break;
+			}
+
+			menutext(c,43+16*0,SHX(-3),PHX(-3),"PAD LAYOUT");
+			menutext(c+160+40,43+16*0,0,0,padlayoutname[PadLayout]);
+
+			menutext(c,43+16*1,SHX(-3),PHX(-3),"SHIFT MODE");
+			menutext(c+160+40,43+16*1,0,0,PadShiftLayer?"ON":"OFF");
+
+			gametext(320>>1,43+16*2+4,padlayouthelp[PadLayout][0],0,2+8+16);
+			gametext(320>>1,43+16*2+12,padlayouthelp[PadLayout][1],0,2+8+16);
+
+			if(PadLayout != PADLAYOUT_RETRO)
+				gametext(320>>1,43+16*2+28,"*** SHIFT MODE: RETRO LAYOUT ONLY ***",0,2+8+16);
+			else if(PadShiftLayer)
+				gametext(320>>1,43+16*2+28,"*** HOLD START: D-PAD IS THE INVENTORY ***",0,2+8+16);
+			else
+				gametext(320>>1,43+16*2+28,"*** ADDS INVENTORY AND LOOK ON A HELD START ***",0,2+8+16);
+
+			break;
+#endif
 
         case 350:
             cmenu(351);

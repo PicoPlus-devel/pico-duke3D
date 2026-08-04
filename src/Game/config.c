@@ -68,11 +68,12 @@ int32 ControllerType;
 int32 MouseAiming = 0;
 int32_t BFullScreen = 0;
 
-// Four-button NES gamepad layout, toggled from GAME OPTIONS and read live by
-// the pad layer (src/pico/duke_usb_input.cpp). A file-scope global rather than
-// a user_defs field on purpose: ud is serialised piecemeal into savegames, and
-// this is a device setting, not part of the game state.
-int32_t NesPadLayout = 0;
+// Gamepad layout (PADLAYOUT_* in config.h) and Retro-Go's shift layer, both set
+// from GAMEPAD SETUP and read live by the pad layer (src/pico/duke_usb_input.cpp).
+// File-scope globals rather than user_defs fields on purpose: ud is serialised
+// piecemeal into savegames, and these are device settings, not game state.
+int32_t PadLayout = PADLAYOUT_SNES;
+int32_t PadShiftLayer = 0;
 
 //
 // Screen variables
@@ -258,7 +259,8 @@ void CONFIG_SetDefaults( void )
    ud.auto_aim = 2; // full by default
    ud.gitdat_mdk = 0;
    ud.playing_demo_rev = 0;
-   NesPadLayout = 0;
+   PadLayout = PADLAYOUT_SNES;
+   PadShiftLayer = 0;
 
    // com
    strcpy(ud.rtsname,"DUKE.RTS");
@@ -679,11 +681,16 @@ void CONFIG_ReadSetup( void )
 	if(ud.auto_aim!=1 && ud.auto_aim != 2)
 		ud.auto_aim = 2; // avoid people missing with the cfg to go in a deadlock
    SCRIPT_GetNumber( scripthandle, "Misc", "GitDatMdk",&ud.gitdat_mdk);
-   SCRIPT_GetNumber( scripthandle, "Misc", "NesPadLayout",&NesPadLayout);
-   // The NES layout has four buttons and no room for a Run one, so it leans on
-   // Duke's own AutoRun. Forced here as well as at the menu toggle, or turning
+   // Legacy key name: this was a NES on/off toggle before it grew a third value,
+   // and an existing duke3d.cfg should keep working. See config.h.
+   SCRIPT_GetNumber( scripthandle, "Misc", "NesPadLayout",&PadLayout);
+   if(PadLayout < 0 || PadLayout >= PADLAYOUT_COUNT)
+       PadLayout = PADLAYOUT_SNES; // avoid a hand-edited cfg wedging the pad
+   SCRIPT_GetNumber( scripthandle, "Misc", "PadShiftLayer",&PadShiftLayer);
+   // Only the default layout has a button to spare for Run, so the others lean
+   // on Duke's own AutoRun. Forced here as well as at the menu toggle, or turning
    // AutoRun off (CapsLock) once would leave the pad walking forever after.
-   if(NesPadLayout) ud.auto_run = 1;
+   if(PadLayout) ud.auto_run = 1;
 
    if(ud.mywchoice[0] == 0 && ud.mywchoice[1] == 0)
    {
@@ -846,7 +853,8 @@ void CONFIG_WriteSetup( void )
    SCRIPT_PutNumber( scripthandle, "Misc", "WeaponAutoSwitch",ud.weaponautoswitch,false,false);
    if( nHostForceDisableAutoaim == 0) // do not save Host request to have AutoAim Off.
 	   SCRIPT_PutNumber( scripthandle, "Misc", "AutoAim",ud.auto_aim,false,false);
-   SCRIPT_PutNumber( scripthandle, "Misc", "NesPadLayout",NesPadLayout,false,false);
+   SCRIPT_PutNumber( scripthandle, "Misc", "NesPadLayout",PadLayout,false,false); // legacy key name, see config.h
+   SCRIPT_PutNumber( scripthandle, "Misc", "PadShiftLayer",PadShiftLayer,false,false);
    SCRIPT_PutNumber( scripthandle, "Controls", "MouseAimingFlipped",ud.mouseflip,false,false);
    SCRIPT_PutNumber( scripthandle, "Controls","MouseAiming",MouseAiming,false,false);
    SCRIPT_PutNumber( scripthandle, "Controls","GameMouseAiming",(int32) ps[myconnectindex].aim_mode,false,false);

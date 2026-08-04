@@ -8,8 +8,8 @@
 //  (menus) and CONTROL_UpdateKeyboardState (in-game bindings) — so one mapping
 //  drives menu navigation AND gameplay.
 //
-//  There are two layouts, picked live by the NES PAD option in GAME OPTIONS
-//  (NesPadLayout, Game/config.c). Both produce an *effective set* of scancodes
+//  There are three layouts, picked live by the PAD LAYOUT option in GAMEPAD
+//  SETUP (PadLayout, Game/config.c). All produce an *effective set* of scancodes
 //  which is diffed once per poll, so a scancode reached from two buttons -- or
 //  from two different buttons before and after a layout change -- can never be
 //  released while something still asks for it.
@@ -44,6 +44,66 @@
 //  arrows. That is what keeps menues.c untouched -- probe() already takes Enter
 //  to confirm and Escape to go back. There is no button left for Run, so
 //  enabling the option forces Duke's own AutoRun on (see Game/config.c).
+//
+//  RETRO layout, Retro-Go's duke3d-go arrangement (see its CONTROLS.md). Their
+//  handhelds have ten buttons and a SNES pad has eight: OPTION only duplicated
+//  crouch so it is dropped, and MENU becomes a chord.
+//    D-pad/stick  -> arrow keys        (menu nav + move/turn)
+//    A            -> LeftControl       (fire)
+//    B            -> A key             (jump)
+//    X            -> Z key             (crouch)
+//    Y            -> J key             (jetpack)
+//    L / R        -> , and .           (strafe left / right)
+//    SELECT       -> ' (next weapon)
+//    START        -> Space             (open/use -- on release, see below)
+//    L+R          -> Escape            (open the menu)
+//    SELECT+START -> Escape            (same, for a pad with no shoulders)
+//    C            -> Z key             (crouch again, as Retro-Go's OPTION did;
+//                                       only Genesis pads report a C at all)
+//  L+R is the chord to reach for: player.c gives Strafe_Left svel += keymove and
+//  Strafe_Right svel += -keymove, so held together they cancel exactly and
+//  forming the chord has no visible effect. SELECT+START is accepted as well,
+//  because a plain NES pad in a DE-9 port reports no L/R at all and would
+//  otherwise be locked out of the menu -- it costs one visible weapon switch on
+//  the way in, which is why it is not the primary chord.
+//
+//  SHIFT layer (SHIFT MODE option, RETRO only). Duke wants more actions than a
+//  pad has buttons, so holding START for 500 ms turns the D-pad into the
+//  inventory:
+//    D-pad up     -> Enter             (use inventory item)
+//    D-pad down   -> J key             (jetpack)
+//    D-pad l/r    -> [ and ]           (previous / next item)
+//    B            -> PgDn              (look down)
+//    X            -> PgUp              (look up)
+//  A, Y, L and R keep firing, jetpacking and strafing, so only the six above
+//  change. SELECT is the exception: START is held by definition here, so SELECT
+//  completes the SELECT+START menu chord instead of cycling weapons -- which is
+//  how a pad with no shoulder buttons reaches the menu from inside the layer.
+//  Nothing happens during the 500 ms itself -- Retro-Go calls that the
+//  transparent hold -- so you keep running while the timer expires. Once the
+//  layer engages the D-pad no longer walks, and a direction held across that
+//  moment stays ignored until released, or walking forward would instantly use
+//  an inventory item.
+//
+//  Four things about that mechanism, in the order they will bite:
+//   1. START can no longer act on press, since we have to see whether the hold
+//      reaches 500 ms. So Use fires on *release*, its press length is then
+//      arbitrary, and Duke samples KB_KeyDown[] once per TICSPERFRAME (~38 ms at
+//      worst) -- a quick tap would be missed entirely. Hence the 100 ms pulse.
+//      It cannot double-fire: Open is bit 29 and sector.c edge-triggers that
+//      whole bit group through p->interface_toggle_flag, so a held Open acts
+//      exactly once. The same is true of Jetpack, Inventory, Inventory_Left/
+//      Right, the weapon nibble and Escape, which is why none of the hotkeys
+//      above need repeat suppression of their own. Look_Up/Look_Down are
+//      deliberately *outside* that mask, i.e. continuous.
+//   2. probe() reads PgUp/PgDn as menu up/down AND takes Space as confirm, so
+//      neither the look keys nor a draining Use pulse may ever reach a menu. The
+//      hold.reset() on duke_menu_is_active() is not optional: drop it and the
+//      pad scrolls and confirms menus by itself.
+//   3. SHIFT MODE off removes the layer and the release latency both -- START is
+//      then a plain immediate Use, because there is nothing to disambiguate.
+//   4. Like the NES layout, RETRO has no button left for Run, so selecting it
+//      forces Duke's own AutoRun on (see Game/config.c).
 //
 //  MantaPad note: that pad boots in NES mode, where only two face buttons are
 //  reported and its "NES B" is physically the SNES X -- so X arrived as logical
@@ -102,13 +162,19 @@ void pico_display_post_key(uint8_t rawcode);   // pico_display.c -> keyhandler()
 void duke_usb_init(void);
 void duke_usb_poll(void);
 
-// The NES PAD option in GAME OPTIONS, read live so the layout changes the
-// moment it is toggled (Game/config.c, persisted as Misc/NesPadLayout).
-extern int32_t NesPadLayout;
-// Game/menues.c. The NES layout needs this because one button has to mean fire
-// in game and confirm in a menu.
+// The two GAMEPAD SETUP options, read live so the mapping changes the moment
+// they are toggled (Game/config.c, persisted as Misc/NesPadLayout -- a legacy
+// key name -- and Misc/PadShiftLayer).
+extern int32_t PadLayout;
+extern int32_t PadShiftLayer;
+// Game/menues.c. The NES and RETRO layouts need this because one button has to
+// mean fire in game and confirm in a menu.
 int duke_menu_is_active(void);
 }
+
+// Mirrors PADLAYOUT_* in Game/config.h, which cannot be included here (it comes
+// with the int32 typedefs and the rest of the game headers). Keep the two in step.
+enum { PAD_SNES = 0, PAD_NES = 1, PAD_RETRO = 2, PAD_COUNT = 3 };
 
 // DOS scancodes (values from Game/src/keyboard.h; arrows are Duke's remapped
 // extended codes, all < 0x80 so they can be posted directly).
@@ -125,10 +191,15 @@ namespace sc
     constexpr uint8_t Quote  = 0x28;   // Next_Weapon
     constexpr uint8_t Comma  = 0x33;   // Strafe_Left
     constexpr uint8_t Period = 0x34;   // Strafe_Right
+    constexpr uint8_t KeyJ   = 0x24;   // Jetpack
+    constexpr uint8_t LBrack = 0x1a;   // Inventory_Left
+    constexpr uint8_t RBrack = 0x1b;   // Inventory_Right
     constexpr uint8_t Up     = 0x5a;
     constexpr uint8_t Down   = 0x6a;
     constexpr uint8_t Left   = 0x6b;
     constexpr uint8_t Right  = 0x6c;
+    constexpr uint8_t PgUp   = 0x63;   // Look_Up   (remapped extended code, as the arrows)
+    constexpr uint8_t PgDn   = 0x64;   // Look_Down (ditto)
 }
 
 namespace
@@ -147,14 +218,17 @@ namespace
         SC_RETURN, SC_ESCAPE, SC_LCTRL, SC_SPACE,
         SC_LSHIFT, SC_LALT, SC_KEYA, SC_KEYZ,
         SC_QUOTE, SC_COMMA, SC_PERIOD,
+        SC_KEYJ, SC_LBRACK, SC_RBRACK, SC_PGUP, SC_PGDN,
         SC_COUNT
     };
     constexpr uint8_t kScancode[SC_COUNT] = {
-        sc::Up,     sc::Down,   sc::Left,  sc::Right,
-        sc::Return, sc::Escape, sc::LCtrl, sc::Space,
-        sc::LShift, sc::LAlt,   sc::KeyA,  sc::KeyZ,
+        sc::Up,     sc::Down,   sc::Left,   sc::Right,
+        sc::Return, sc::Escape, sc::LCtrl,  sc::Space,
+        sc::LShift, sc::LAlt,   sc::KeyA,   sc::KeyZ,
         sc::Quote,  sc::Comma,  sc::Period,
+        sc::KeyJ,   sc::LBrack, sc::RBrack, sc::PgUp,  sc::PgDn,
     };
+    static_assert(SC_COUNT <= 32, "postKeyDiff carries the whole set in a uint32_t");
     constexpr uint32_t K(ScIdx i) { return 1u << i; }
 
     void postKeyDiff(uint32_t cur)
@@ -275,6 +349,136 @@ namespace
         return k;
     }
 
+    // Retro-Go's shift activation, for the RETRO layout. START cannot act on
+    // press any more -- we have to wait and see whether the hold reaches
+    // kShiftHoldUs -- so a short tap fires Use on release, and because the press
+    // length is then arbitrary it gets stretched to kUsePulseUs. See the notes at
+    // the top of this file for why both numbers are needed.
+    constexpr uint64_t kShiftHoldUs = 500000;
+    constexpr uint64_t kUsePulseUs  = 100000;
+
+    struct StartHold
+    {
+        enum State { IDLE, WAIT, SHIFT };
+        State state = IDLE;
+        uint64_t pressed_at = 0;
+        uint64_t pulse_until = 0;
+
+        // A draining Use pulse is Space and probe() takes Space as confirm, so a
+        // pulse must never survive into a menu. Same for the layer itself, whose
+        // look keys are PgUp/PgDn -- menu up/down as far as probe() is concerned.
+        void reset() { state = IDLE; pulse_until = 0; }
+
+        // True while the layer is engaged; sets `use` while the Use pulse runs.
+        bool update(bool start_down, uint64_t now, bool &use)
+        {
+            switch (state)
+            {
+                case IDLE:
+                    if (start_down) { state = WAIT; pressed_at = now; }
+                    break;
+                case WAIT:
+                    // The transparent hold: nothing happens yet, so movement and
+                    // every other button keep working while the timer runs.
+                    if (!start_down) { state = IDLE; pulse_until = now + kUsePulseUs; }
+                    else if (now - pressed_at >= kShiftHoldUs) state = SHIFT;
+                    break;
+                case SHIFT:
+                    if (!start_down) state = IDLE;   // no Use on the way out
+                    break;
+            }
+            use = now < pulse_until;
+            return state == SHIFT;
+        }
+    };
+
+    // The Retro-Go layout and its shift layer (see the tables at the top).
+    uint32_t retroLayout(uint32_t b)
+    {
+        using Button = io::GamePadState::Button;
+
+        const bool in_menu = duke_menu_is_active() != 0;
+
+        // Nine in-game jobs, eight buttons, so the menu is a chord. Both are
+        // accepted; see the header comment for which to reach for and why.
+        const uint32_t kShoulders = B(Button::L) | B(Button::R);
+        const uint32_t kSelStart  = B(Button::SELECT) | B(Button::START);
+        const bool chord = (b & kShoulders) == kShoulders ||
+                           (b & kSelStart)  == kSelStart;
+
+        static StartHold hold;
+        bool use_pulse = false;
+        bool shift = false;
+        if (in_menu || chord || !PadShiftLayer)
+            hold.reset();   // keep the pulse and the layer out of menus, and stop
+                            // the SELECT+START chord ending in a stray Use
+        else
+            shift = hold.update((b & B(Button::START)) != 0, time_us_64(), use_pulse);
+
+        // As nesLayout's latch, but over the whole button word including the
+        // directions: with the layer up those are inventory actions, so a
+        // direction still held as the layer engages -- you were running -- would
+        // fire one. The state carries the chord and layer bits, so forming or
+        // breaking either counts as a transition, which is also what stops an
+        // uneven release of L+R leaving a stray strafe behind.
+        static int8_t was_state = -1;
+        static uint32_t held_over = 0;
+        const int8_t state = (in_menu ? 1 : 0) | (chord ? 2 : 0) | (shift ? 4 : 0);
+        if (was_state != state)
+        {
+            was_state = state;
+            held_over = b;
+        }
+        held_over &= b;
+        const uint32_t a = b & ~held_over;
+
+        if (in_menu)
+        {
+            // Confirm and back are all a menu needs, and probe() already takes
+            // Enter for one and Escape for the other -- so menues.c needs no
+            // changes of its own, exactly as with the other two layouts.
+            uint32_t k = arrowKeys(b);
+            if (a & B(Button::A))     k |= K(SC_RETURN);
+            if (a & B(Button::B))     k |= K(SC_ESCAPE);
+            if (a & B(Button::START)) k |= K(SC_ESCAPE);
+            return k;
+        }
+
+        if (chord) return K(SC_ESCAPE);   // open the menu, nothing else
+
+        // Untouched by the shift layer.
+        uint32_t k = 0;
+        if (a & B(Button::A))      k |= K(SC_LCTRL);    // fire
+        if (a & B(Button::Y))      k |= K(SC_KEYJ);     // jetpack
+        if (a & B(Button::L))      k |= K(SC_COMMA);    // strafe left
+        if (a & B(Button::R))      k |= K(SC_PERIOD);   // strafe right
+        if (a & B(Button::SELECT)) k |= K(SC_QUOTE);    // next weapon
+        if (a & B(Button::C))      k |= K(SC_KEYZ);     // crouch (Retro-Go's OPTION,
+                                                        // which duplicated it too)
+        // Open/use: on release through the pulse when the layer is armed, on press
+        // when it is not -- with nothing to disambiguate there is no reason to add
+        // the latency.
+        if (PadShiftLayer) { if (use_pulse)            k |= K(SC_SPACE); }
+        else               { if (a & B(Button::START)) k |= K(SC_SPACE); }
+
+        if (!shift)
+        {
+            k |= arrowKeys(a);                             // move + turn
+            if (a & B(Button::B)) k |= K(SC_KEYA);         // jump
+            if (a & B(Button::X)) k |= K(SC_KEYZ);         // crouch
+        }
+        else
+        {
+            if (a & B(Button::UP))    k |= K(SC_RETURN);   // use inventory item
+            if (a & B(Button::DOWN))  k |= K(SC_KEYJ);     // jetpack
+            if (a & B(Button::LEFT))  k |= K(SC_LBRACK);   // previous item
+            if (a & B(Button::RIGHT)) k |= K(SC_RBRACK);   // next item
+            if (a & B(Button::B))     k |= K(SC_PGDN);     // look down
+            if (a & B(Button::X))     k |= K(SC_PGUP);     // look up
+        }
+        return k;
+    }
+
 #if DUKE_HAS_NESPAD
     // Lazy-init on first poll, then harvest the PIO read started on the
     // previous poll and immediately kick off the next one (~200 us per
@@ -340,7 +544,7 @@ namespace
     // nespad_states_ext is in SNES serial order; translate it into the same
     // io::GamePadState::Button bits the USB pads produce, so a SNES pad in a
     // Murmulator port behaves EXACTLY like a USB SNES pad and there is one set
-    // of layouts (snesLayout/nesLayout above) to reason about.
+    // of layouts (snesLayout/nesLayout/retroLayout above) to reason about.
     //
     // A plain NES pad only populates bits 0-7 — as A,B,Select,Start,dpad, which
     // land on SNES B,Y,Select,Start. Under the default layout that leaves it
@@ -348,7 +552,9 @@ namespace
     // movement, but NO fire: fire lives on SNES X, which a NES pad does not
     // have. The driver masks the ID bits that would distinguish the two pad
     // shapes before we see them, so it cannot be detected and corrected here —
-    // that is what the NES PAD option in GAME OPTIONS is for.
+    // that is what the PAD LAYOUT option in GAMEPAD SETUP is for. Such a pad has
+    // no L/R either, so in the RETRO layout SELECT+START is its only way into the
+    // menu.
     uint32_t nesToButtons(uint16_t nes)
     {
         using Button = io::GamePadState::Button;
@@ -389,10 +595,14 @@ namespace
         // button is always still held at the switch -- and it means something
         // different on the other side of it. Report nothing until every button
         // has been let go. The D-pad stays live: it navigates and moves the
-        // same way in both layouts.
+        // same way in every layout. (The shift layer has its own latch, inside
+        // retroLayout, because it also has to catch the directions.)
         static int8_t prev_layout = -1;
         static bool settling = false;
-        const int8_t layout = NesPadLayout ? 1 : 0;
+        // Clamped again here: CONFIG_ReadSetup clamps the file, but this layer
+        // reads the option live and must not dispatch on a value it does not know.
+        const int8_t layout = (PadLayout > PAD_SNES && PadLayout < PAD_COUNT)
+                                  ? (int8_t)PadLayout : (int8_t)PAD_SNES;
         if (prev_layout != layout)
         {
             prev_layout = layout;
@@ -404,7 +614,12 @@ namespace
             else settling = false;
         }
 
-        postKeyDiff(layout ? nesLayout(buttons) : snesLayout(buttons));
+        switch (layout)
+        {
+            case PAD_NES:   postKeyDiff(nesLayout(buttons));   break;
+            case PAD_RETRO: postKeyDiff(retroLayout(buttons)); break;
+            default:        postKeyDiff(snesLayout(buttons));  break;
+        }
     }
 
     // USB keyboards work alongside the pad. HID usage (page 0x07) -> DOS set-1

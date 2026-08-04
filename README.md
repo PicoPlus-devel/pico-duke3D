@@ -223,11 +223,15 @@ to `pico_display_post_key()` → Duke's `keyhandler()`, which updates both
 one table drives menu navigation *and* gameplay, and a gamepad button is
 indistinguishable from the key it stands for.
 
-There are **two gamepad layouts**, switched by the **NES PAD** option in
-*Options → Game Options*: the six-button SNES one below, and a four-button
-[NES layout](#nes-pad-layout) for a vintage NES controller or a NES-shelled
-MantaPad. The setting persists in `duke3d.cfg` as `Misc/NesPadLayout` and
-applies to every pad at once — USB and the legacy ports alike.
+There are **three gamepad layouts**, chosen with **PAD LAYOUT** in
+*Options → Game Options → Gamepad Setup*: the six-button SNES one below, a
+four-button [NES layout](#nes-pad-layout) for a vintage NES controller or a
+NES-shelled MantaPad, and a [Retro-Go layout](#retro-go-layout) modelled on
+[duke3d-go](https://github.com/DynaMight1124/retro-go/blob/megapack/duke3d-go/CONTROLS.md).
+The same menu carries **SHIFT MODE**, Retro-Go's held-START hotkey layer. Both
+settings persist in `duke3d.cfg` (`Misc/NesPadLayout` — a legacy key name — and
+`Misc/PadShiftLayer`) and apply to every pad at once, USB and the legacy ports
+alike.
 
 ### Gamepad
 
@@ -258,7 +262,7 @@ Two notes on that table:
 
 #### NES pad layout
 
-Turn **NES PAD** on in *Options → Game Options*. A NES controller has four
+Set **PAD LAYOUT** to `NES`. A NES controller has four
 buttons and Duke needs fire, open, jump, crouch, weapons, strafe and the menu, so
 **SELECT is a shift layer** rather than a button of its own — it does nothing on
 its own, which means there is no press-versus-hold to get wrong.
@@ -290,6 +294,81 @@ Three things worth knowing:
   Same when the option itself is toggled: you are pressing A at that moment, and
   A means something different on the other side of the switch.
 
+#### Retro-Go layout
+
+Set **PAD LAYOUT** to `RETRO`. This is Retro-Go's
+[duke3d-go](https://github.com/DynaMight1124/retro-go/blob/megapack/duke3d-go/CONTROLS.md)
+arrangement, which puts fire on **A** and use on **START** instead of the DOS-ish
+default. Retro-Go's handhelds have ten buttons and a SNES pad has eight: their
+`OPTION` only duplicated crouch, so it is dropped, and `MENU` becomes a chord.
+
+| Button | Sends | In game |
+|---|---|---|
+| D-pad / left stick | arrow keys | move + turn |
+| **A** | Left Ctrl | **fire** |
+| **B** | `A` | jump |
+| **X** | `Z` | crouch |
+| **Y** | `J` | jetpack |
+| **L** / **R** | `,` / `.` | strafe left / right |
+| **SELECT** | `'` | next weapon |
+| **START** | Space | open / use |
+| **L+R** | Escape | **open the menu** |
+| **SELECT+START** | Escape | open the menu (see below) |
+| **C** | `Z` | crouch again — only Genesis pads report a `C` |
+
+**L+R is the chord to reach for.** It is the only one with no side effect at all:
+`player.c` gives `Strafe_Left` `svel += keymove` and `Strafe_Right`
+`svel += -keymove`, so held together they cancel exactly. **SELECT+START** is
+accepted as well because a plain NES pad in a DE-9 port reports no shoulder
+buttons and would otherwise be locked out of the menu — it costs one visible
+weapon switch on the way in, which is why it is not the primary chord.
+
+As in the NES layout there is **no Run button** (L and R are strafe), so selecting
+`RETRO` turns Duke's own **AutoRun** on and `CONFIG_ReadSetup` re-forces it at
+every startup.
+
+##### Shift mode
+
+**SHIFT MODE** turns Retro-Go's hotkey layer on. Duke wants more actions than a
+pad has buttons, so **holding START for 500 ms** turns the D-pad into the
+inventory:
+
+| Button | Sends | Action |
+|---|---|---|
+| **D-pad ↑** | Enter | **use inventory item** (medkit, steroids…) |
+| **D-pad ↓** | `J` | jetpack |
+| **D-pad ←→** | `[` / `]` | previous / next inventory item |
+| **B** | PgDn | look down |
+| **X** | PgUp | look up |
+
+**A**, **Y**, **L** and **R** keep firing, jetpacking and strafing, so only those
+six change. **SELECT** is the exception: START is held by definition here, so
+SELECT completes the SELECT+START chord and opens the menu — which is how a pad
+with no shoulder buttons gets out of the layer.
+
+Four things worth knowing:
+
+* **Nothing happens during the 500 ms**, which Retro-Go calls the *transparent
+  hold* — you keep running and turning while the timer expires. Once the layer
+  engages the D-pad no longer walks, and a direction held across that moment is
+  **ignored until you let go**: otherwise running forward would instantly burn an
+  inventory item.
+* **Use fires when you release START**, not when you press it, because START
+  cannot act until we know whether the hold reached 500 ms. The press length is
+  then arbitrary, and Duke samples `KB_KeyDown[]` only once per `TICSPERFRAME`
+  (~38 ms at worst), so a quick tap would be missed entirely — the release is
+  therefore stretched into a **100 ms pulse**. It cannot open a door twice:
+  `Open` is bit 29 and `sector.c` edge-triggers that whole bit group through
+  `p->interface_toggle_flag`, so a held `Open` acts exactly once. The same is true
+  of Jetpack, Inventory, the weapon nibble and Escape, which is why none of the
+  hotkeys above need debouncing. `Look_Up`/`Look_Down` are deliberately *outside*
+  that mask, i.e. continuous.
+* **Releasing START after the layer engaged does not use anything** — the hold is
+  what you asked for, so there is no Use on the way out.
+* **SHIFT MODE off removes the layer and the release latency both**: START goes
+  back to being a plain immediate Use, since there is then nothing to tell apart.
+  It has no effect on the SNES or NES layouts, which have no START to spare.
+
 #### MantaPad (cheap AliExpress SNES pad, VID 081f)
 
 This pad can act as either a NES or a SNES controller, and pico_shared defaults
@@ -318,7 +397,9 @@ report in the SNES serial positions B and Y, which that layout maps to Escape an
 Space; fire lives on SNES **X**, which a NES pad does not have. The driver masks
 the ID bits that distinguish the two pad shapes before the game sees them, so it
 cannot be detected and corrected at runtime — that is exactly what the
-[NES PAD option](#nes-pad-layout) is for.
+[NES layout](#nes-pad-layout) is for. Such a pad has no shoulder buttons either,
+so in the [Retro-Go layout](#retro-go-layout) **SELECT+START** is its only way
+into the menu.
 
 USB input still works alongside the ports, through the RP2350's native USB
 controller — a pad or keyboard needs an OTG/host adapter on the module's own
@@ -326,20 +407,109 @@ socket.
 
 ### USB keyboard
 
-A keyboard works alongside the pad, with all letters, digits and punctuation,
-F1–F12, the keypad, Backspace, Tab, Enter, Escape, Space and the arrows. Shift is
-tracked as a real scancode, so `KB_Getch()` picks the shifted ASCII table and
-capitals work. `F6` quicksave and `F9` quickload work from a keyboard.
+A keyboard works alongside the pad — both are live at once, and neither can tell
+it is sharing. All letters, digits and punctuation are translated, plus F1–F12,
+the whole keypad, Backspace, Tab, Enter, Escape, Space, Caps Lock, Scroll Lock,
+Pause, Num Lock and the arrows. Shift is tracked as a real scancode, so
+`KB_Getch()` picks the shifted ASCII table and capitals work when you type a save
+name.
 
-Two deliberate gaps:
+#### What the keys do
 
-* **Insert / Home / PageUp / Delete / End / PageDown** are omitted. They are
-  extended (`0xE0`-prefixed) on a PC keyboard and Duke reaches them through its
-  own `extscanToSC` table, so posting a bare code would mean a different key. The
-  keypad equivalents do work.
+Duke's own defaults, written into `duke3d.cfg` on first run and **rebindable** in
+*Options → Setup Keyboard*. Where the table says `Kpad`, that keypad key is the
+only one that works here — see [the two gaps](#two-deliberate-gaps) below.
+
+Moving:
+
+| Action | Key |
+|---|---|
+| Move forward / backward | **↑** / **↓**, or Kpad8 / Kpad2 |
+| Turn left / right | **←** / **→**, or Kpad4 / Kpad6 |
+| Strafe left / right | **`,`** / **`.`** |
+| Strafe (hold: the turn keys sidestep instead) | **Alt** |
+| Run (hold) | **Shift** |
+| AutoRun on / off | **Caps Lock** |
+| Jump | **`A`** or **`/`** |
+| Crouch | **`Z`** |
+| Look up / down | **Kpad9** / **Kpad3** |
+| Look left / right | **Kpad0** / **Kpad.** |
+| Aim up / down | **Kpad7** / **Kpad1** |
+| Centre the view | **Kpad5** |
+
+Fighting:
+
+| Action | Key |
+|---|---|
+| Fire | **Ctrl** |
+| Open / use / flip a switch | **Space** |
+| Quick kick | **`C`** |
+| Next / previous weapon | **`'`** / **`;`** |
+| Select weapon 1–10 | **`1`**…**`9`**, **`0`** |
+| Turn around | **Backspace** |
+| Holster weapon | **Scroll Lock** |
+| Hide the on-screen weapon | **`S`** |
+| Auto-aim on / off | **`V`** |
+| Crosshair on / off | **`I`** |
+
+Inventory — each fires once per press, however long you hold it:
+
+| Action | Key |
+|---|---|
+| Use the selected item | **Enter** or Kpad Enter |
+| Previous / next item | **`[`** / **`]`** |
+| Medkit | **`M`** |
+| Steroids | **`R`** |
+| Jetpack | **`J`** |
+| Night vision | **`N`** |
+| Holo Duke | **`H`** |
+
+Screen and system:
+
+| Action | Key |
+|---|---|
+| Open the menu | **Escape** |
+| Pause | **Pause** |
+| Overhead map | **Tab** |
+| Map follow mode | **`F`** |
+| Shrink / enlarge the view | **`-`** / **`=`**, or Kpad- / Kpad+ |
+| Console (Chocolate Duke leftover, does nothing) | **`` ` ``** |
+| Send message, show opponent's weapon, co-op view | **`T`**, **`W`**, **`K`** — multiplayer only |
+| Mouse aiming toggle | **`U`** — no mouse on this port |
+
+Function keys, handled by the game itself and **not** rebindable:
+
+| Key | Does |
+|---|---|
+| **F1** | help screen — Space or Enter pages through it |
+| **F2** / **F3** | save game / load game |
+| **F4** | sound setup menu |
+| **F5** | name the current music track; **Shift+F5** changes it |
+| **F6** | quicksave — opens the save menu instead until you have made one save |
+| **F7** | third-person view on / off |
+| **F8** | messages on / off |
+| **F9** | quickload |
+| **F10** | quit |
+| **F11** | brightness up; **Shift+F11** down |
+| **F12** | screenshot — **reports "SCREEN SAVED" but writes nothing**, because `screencapture()` is a stub on this port (`src/pico/pico_display.c`) |
+
+#### Two deliberate gaps
+
+* **Insert / Home / PageUp / Delete / End / PageDown** are omitted, and so is
+  PrintScreen. Those six are extended (`0xE0`-prefixed) on a PC keyboard and Duke
+  reaches them through its own `extscanToSC` table, so posting a bare code would
+  mean a different key. It costs nothing: every one of them is *Duke's first*
+  binding for look and aim, and its *second* binding is a keypad key — which is
+  why the tables above put look and aim on Kpad9/Kpad3/Kpad0/Kpad./Kpad7/Kpad1.
+  The keypad always works regardless of Num Lock, since a USB keyboard reports
+  keypad keys as their own HID usages and the host decides what Num Lock means.
 * **Arrows** use Duke's remapped extended codes rather than `0xE0` pairs, since
   this layer posts single bytes. That is why the arrow and keypad entries differ
   even though a PC keyboard shares their scancodes.
+
+Two smaller details: the **right-hand Ctrl, Shift and Alt** are folded onto the
+left ones, which matches Duke's own defaults (it binds both), and the **Windows /
+GUI keys send nothing** — no scancode is defined for them.
 
 ### Saving and loading — a keyboard is optional
 

@@ -36,7 +36,20 @@ extern int32_t ScreenMode;
 extern int32 ScreenWidth;
 extern int32 ScreenHeight;
 extern int32_t BFullScreen;
-extern int32_t NesPadLayout;
+
+// Gamepad layout, chosen from the GAMEPAD SETUP menu and read live by the pad
+// layer (src/pico/duke_usb_input.cpp). The cfg key is still "Misc/NesPadLayout",
+// from when this was a NES on/off toggle -- kept so existing duke3d.cfg files
+// keep their setting, which is why the values below start SNES, NES.
+extern int32_t PadLayout;
+#define PADLAYOUT_SNES   0
+#define PADLAYOUT_NES    1
+#define PADLAYOUT_RETRO  2
+#define PADLAYOUT_COUNT  3
+
+// Retro-Go's shift layer: hold START to turn the D-pad into the inventory.
+// Only the RETRO layout has a START to spare for it.
+extern int32_t PadShiftLayer;
 
 void CONFIG_ReadSetup( void );
 void CONFIG_GetSetupFilename( void );

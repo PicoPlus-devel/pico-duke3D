@@ -29,8 +29,12 @@ the RP2350, with `DUKE3D.GRP` streamed from the SD card.
   depending on the board, including XInput pads
 - NES/SNES controller ports over PIO on the boards that have them, folded into
   the same scancode stream as USB, so a pad in a DE-9 port behaves like a USB pad
-- An optional four-button **NES pad layout** (Options → Game Options → NES PAD)
-  for a vintage NES controller, with SELECT as a shift layer; persists in
+- Three gamepad layouts, chosen in Options → Game Options → **Gamepad Setup**:
+  the default six-button one, a four-button **NES** layout for a vintage NES
+  controller (SELECT acts as a shift layer), and a **Retro-Go** layout modelled on
+  duke3d-go — fire on A, use on START, strafe on L/R, and the menu on L+R.
+  Retro-Go's **SHIFT MODE** comes with it: hold START for 500 ms and the D-pad
+  becomes the inventory, with look up/down on X and B. Both settings persist in
   `duke3d.cfg`
 - Saved games and settings on the SD card, next to the GRP
   (`/roms/duke3d/game0.sav` … `game9.sav`, `/roms/duke3d/duke3d.cfg`). Nothing is

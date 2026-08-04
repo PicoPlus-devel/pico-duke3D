@@ -97,9 +97,11 @@ fi
     echo
     echo "USB gamepad, USB keyboard, and the NES/SNES ports on the boards that have them --"
     echo "all folded into one scancode stream, so a pad in a DE-9 port behaves exactly like"
-    echo "a USB pad. There are two pad layouts, switched by **NES PAD** in *Options → Game"
-    echo "Options*: the default six-button SNES one, and a four-button NES layout where"
-    echo "SELECT acts as a shift layer. Saving needs no keyboard -- **A** accepts an empty"
+    echo "a USB pad. There are three pad layouts, chosen with **PAD LAYOUT** in *Options →"
+    echo "Game Options → Gamepad Setup*: the default six-button SNES one, a four-button NES"
+    echo "layout where SELECT acts as a shift layer, and a Retro-Go layout with fire on A,"
+    echo "use on START and the menu on L+R -- plus **SHIFT MODE**, where holding START for"
+    echo "500 ms turns the D-pad into the inventory. Saving needs no keyboard -- **A** accepts an empty"
     echo "save name. The full tables are in"
     echo "[README.md](https://github.com/${GITHUB_REPOSITORY:-fhoedemakers/pico-duke3D}/blob/${TAG}/README.md#controls)."
     echo
