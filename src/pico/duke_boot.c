@@ -19,6 +19,8 @@
 
 #include "duke_dostext.h"
 #include "duke_fatal.h"
+#include "duke_leds.h"
+#include "duke_wiipad.h"
 
 // ---------------------------------------------------------------------------
 // Hardfault breadcrumb (system-freeze diagnosis). Raw UART register writes —
@@ -160,6 +162,12 @@ static void setup_clocks(void)
 // ---------------------------------------------------------------------------
 void __attribute__((noreturn)) _exit(int status)
 {
+    // _nextpage() stops running from here on, so without this the heartbeat
+    // freezes mid-blink and the VU meter holds its last pattern — through the
+    // reset on the way out, and forever on the fatal branch. watchdog_reboot()
+    // clears the PIO but not the pixels' latched colours.
+    duke_leds_off();
+
     if (status == 0) {
         printf("\nduke3d: exit -> reset%s\n",
 #if BUILD_FOR_BOOTLOADER
@@ -169,6 +177,10 @@ void __attribute__((noreturn)) _exit(int status)
 #endif
                );
         stdio_flush();
+        // Hand the I2C bus back before the reset. pico-infonesPlus does the same
+        // before its own reboot: a Wii pad left initialised across the reset has
+        // been seen to hang the next boot. No-op unless a pad actually answered.
+        duke_wiipad_shutdown();
         watchdog_reboot(0, 0, 1);
     } else {
         // Failed assert, abort(), or an Error() path that did not go through
@@ -211,6 +223,16 @@ int main(void)
     printf("clk_sys=%lu clk_hstx=%lu\n",
            (unsigned long)clock_get_hz(clk_sys),
            (unsigned long)clock_get_hz(clk_hstx));
+
+    // Wii extension pad, as early as it can go: it needs nothing but clocks and
+    // GPIO, and it MUST precede any codec access. On the Fruit Jam the TLV320
+    // sits on the very same SDA/SCL, and an uninitialised SNES-Classic pad on
+    // that bus holds SDA low so every DAC register write times out — audio dead.
+    // duke_wiipad_init() clears the bus, quietens an attached pad and clears
+    // again, all with the DAC held in reset; audio_i2s_setup() releases it, much
+    // later and far downstream inside Duke3D_main(). Prints here are not lost:
+    // duke_dostext has been recording since the first printf above.
+    duke_wiipad_init();
 
     // PSRAM first, and only THEN the display. SetupPsram() drives the QMI in
     // direct mode with interrupts off, and XIP reads stall while DIRECT_CSR.EN

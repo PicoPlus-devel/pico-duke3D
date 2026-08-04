@@ -20,8 +20,10 @@
 //   DUKE_AUDIO_I2S_DRIVER 2 -> PCM5100A, no codec, no headphone detect, so
 //                         audio goes to I2S *and* HDMI simultaneously.
 //   NES_PIN_*          -> two legacy NES/SNES ports polled over PIO.
-//   NO_USE_UART        -> GPIO 0/1 are the M2's Wii connector, so the console
-//                         stays off the UART entirely (build passes
+//   WII_PIN_*          -> a Wii extension pad on GPIO 0/1 over i2c0, with the
+//                         bus to itself (no codec on it here).
+//   NO_USE_UART        -> GPIO 0/1 are that Wii connector, so the console stays
+//                         off the UART entirely (build passes
 //                         -DDUKE_NO_STDIO_UART=1). The DOS startup screen on
 //                         HDMI is the log.
 //
@@ -40,7 +42,8 @@
 
 // --- UART (debug console) ---------------------------------------------------
 // Off. The M2's Wii connector sits on GPIO 0/1, which are the pico2 default
-// UART pins, so claiming them would drive the connector. NO_USE_UART also
+// UART pins — and those pins are now genuinely driven, as i2c0 for the pad
+// (WII_PIN_SDA/SCL below), so the UART cannot have them. NO_USE_UART also
 // suppresses duke_boot.c's raw-register hardfault breadcrumb — writing uart0
 // registers while the peripheral is held in reset would fault inside the fault
 // handler. Flip both this and -DDUKE_NO_STDIO_UART=0 to get a console back.
@@ -83,13 +86,18 @@
 // PCM510x has no volume register and benefits from the DC blocker in
 // audio_i2s.c (see I2S_AUDIO_COMPENSATE_DC_OFFSET in audio_i2s.h).
 #define I2S_AUDIO_COMPENSATE_DC_OFFSET 1
-// No TLV320 here. Its pins are unused (the codec init never runs for driver 2,
-// and every tlv320_* entry point short-circuits on !s_active), but WIIPAD_I2C
-// must stay a valid i2c instance: tlv320dac3100.c uses it as an i2c_inst_t* in
-// always-compiled code.
+// Wii extension port (NES/SNES Classic Mini, Wii Classic Controller (Pro)),
+// read over I2C by src/pico/duke_wiipad.cpp. The M2's connector is on GPIO
+// 0/1 = i2c0 SDA/SCL — the same pins the UART would want, which is exactly why
+// NO_USE_UART is set above. Matches BoardConfigs.cmake HW_CONFIG 13.
+// No TLV320 here, so the pad has the bus to itself (and needs no reset-hold
+// dance in duke_wiipad_init). The codec's pins are unused — its init never runs
+// for driver 2, and every tlv320_* entry point short-circuits on !s_active —
+// but WIIPAD_I2C must still be a valid i2c instance, because tlv320dac3100.c
+// uses it as an i2c_inst_t* in always-compiled code.
 #define WIIPAD_I2C i2c0
-#define WII_PIN_SDA -1
-#define WII_PIN_SCL -1
+#define WII_PIN_SDA 0
+#define WII_PIN_SCL 1
 
 // Lock the audio sample rate to 48 kHz — the exact-lock rate for the 25.2 MHz
 // pixel clock (HDMI ACR N=6144, CTS=25200) and the rate baked into
@@ -116,6 +124,14 @@
 // the linker's 8 MB region still boots — it just streams tiles harder. See
 // duke_psram.c.
 #define PSRAM_CS_PIN 8
+
+// --- Status LEDs (src/pico/duke_leds.c) -------------------------------------
+// -1 means the board does not have it, the same convention as the NES pins
+// below. Plain onboard LED, blinked every 60 game frames. = PICO_DEFAULT_LED_PIN
+// of the Pico 2 the Murmulator carries.
+#define DUKE_LED_PIN 25
+// No NeoPixels on this board, so no VU meter.
+#define DUKE_VU_WS2812_PIN -1
 
 // --- Legacy NES/SNES controller ports ---------------------------------------
 // Two ports, SNES auto-detected, polled over PIO by the vendored pico_shared

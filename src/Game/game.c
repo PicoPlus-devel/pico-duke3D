@@ -8303,6 +8303,22 @@ int Duke3D_main(int argc,char  **argv)
 
     Startup();
 
+#ifdef PLATFORM_PICO
+    // Status LEDs, claimed here on purpose: this is the first point at which
+    // every other PIO consumer has taken what it needs. _platform_init() ran
+    // before us and gave pio0 to Pico-PIO-USB, and Startup() -> SoundStartup()
+    // -> FX_Init -> DSL_Init -> audio_i2s_setup just gave pio1 to I2S. The Fruit
+    // Jam's NeoPixel is GPIO 32, which needs a PIO whose GPIO base can be moved
+    // to 16, and the base can only be changed on a completely unused PIO — so
+    // going last means a failure here is a real diagnostic ("nothing was free")
+    // rather than a state machine stolen from audio or USB. It also needs the
+    // final clk_sys: ws2812_program_init samples it once for the bit clock.
+    {
+        extern void duke_leds_init(void);
+        duke_leds_init();
+    }
+#endif
+
     if( eightytwofifty && numplayers > 1 && (MusicDevice != NumSoundCards) )
     {
         puts("\n=========================================================================");

@@ -66,6 +66,9 @@
 #define PICO_AUDIO_I2S_INTERRUPT_PIN 23
 #define PICO_AUDIO_I2S_INTERRUPT_IS_BUTTON 0
 // I2C bus for the TLV320DAC3100 codec (macros consumed by tlv320dac3100.c).
+// The very same bus and pins are the Wii extension port on the STEMMA QT
+// connector, read by src/pico/duke_wiipad.cpp — which is why the pad has to be
+// brought up before the codec, see duke_wiipad_init(). -1 would disable it.
 #define WIIPAD_I2C i2c0
 #define WII_PIN_SDA 20
 #define WII_PIN_SCL 21
@@ -93,6 +96,16 @@
 
 // --- PSRAM (8 MB APS6404 on QMI CS1 = GPIO 47) ------------------------------
 #define PSRAM_CS_PIN 47
+
+// --- Status LEDs (src/pico/duke_leds.c) -------------------------------------
+// -1 means the board does not have it, the same convention as the Wii pins
+// above. Plain onboard LED, blinked every 60 game frames. = PICO_DEFAULT_LED_PIN.
+#define DUKE_LED_PIN 29
+// The 5 onboard NeoPixels, driven as an audio VU meter (ported from
+// pico-infonesPlus' vumeter.cpp, which this board also runs).
+// = PICO_DEFAULT_WS2812_PIN. Being above GPIO 31 this needs a PIO whose GPIO
+// base can be moved to 16, which only the otherwise-unused pio2 can offer.
+#define DUKE_VU_WS2812_PIN 32
 
 // --- USB host on Pico-PIO-USB -----------------------------------------------
 // Marker only in M0: selects the "retask PLL_USB as the fixed 126 MHz clk_hstx

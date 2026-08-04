@@ -83,10 +83,11 @@
 // PCM510x has no volume register and benefits from the DC blocker in
 // audio_i2s.c (see I2S_AUDIO_COMPENSATE_DC_OFFSET in audio_i2s.h).
 #define I2S_AUDIO_COMPENSATE_DC_OFFSET 1
-// No TLV320 here. Its pins are unused (the codec init never runs for driver 2,
-// and every tlv320_* entry point short-circuits on !s_active), but WIIPAD_I2C
-// must stay a valid i2c instance: tlv320dac3100.c uses it as an i2c_inst_t* in
-// always-compiled code.
+// No TLV320 and no Wii extension port on this board. Both sets of pins are
+// unused (the codec init never runs for driver 2, every tlv320_* entry point
+// short-circuits on !s_active, and duke_wiipad.cpp plus the wiipad driver
+// compile away on WII_PIN_SDA -1), but WIIPAD_I2C must stay a valid i2c
+// instance: tlv320dac3100.c uses it as an i2c_inst_t* in always-compiled code.
 #define WIIPAD_I2C i2c1
 #define WII_PIN_SDA -1
 #define WII_PIN_SCL -1
@@ -117,6 +118,14 @@
 // the linker's 8 MB region still boots — it just streams tiles harder. See
 // duke_psram.c.
 #define PSRAM_CS_PIN 47
+
+// --- Status LEDs (src/pico/duke_leds.c) -------------------------------------
+// -1 means the board does not have it, the same convention as the NES pins
+// below. Plain onboard LED, blinked every 60 game frames.
+// = PICO_DEFAULT_LED_PIN of the Pico Plus 2 this board requires.
+#define DUKE_LED_PIN 25
+// No NeoPixels on a Pico Plus 2, so no VU meter.
+#define DUKE_VU_WS2812_PIN -1
 
 // --- Legacy NES/SNES controller ports ---------------------------------------
 // Two independent ports (SNES auto-detected), polled over PIO by the vendored

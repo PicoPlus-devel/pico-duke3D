@@ -50,6 +50,8 @@ add_executable(duke3d_game
     ${CMAKE_SOURCE_DIR}/3rdparty/pico_shared_drivers/fonts/FrensFonts.cpp
     pico_display.c
     duke_usb_input.cpp
+    duke_wiipad.cpp
+    duke_leds.c
     duke_audio.c
     duke_music.c
     ${CMAKE_SOURCE_DIR}/3rdparty/emu8950/emu8950.c
@@ -65,6 +67,12 @@ target_include_directories(duke3d_game PRIVATE
     ${CMAKE_SOURCE_DIR}/3rdparty/emu8950
     ${CMAKE_SOURCE_DIR}/3rdparty/pico_shared_drivers/fonts   # pico_shared 8x8 font
 )
+
+# WS2812 program for the Fruit Jam VU meter, a verbatim copy of
+# pico_shared/ws2812.pio. duke_leds.c is its only consumer, and the boards
+# without a strip set DUKE_VU_WS2812_PIN -1 and never include the generated
+# header at all.
+pico_generate_pio_header(duke3d_game ${CMAKE_CURRENT_LIST_DIR}/ws2812.pio)
 
 # emu8950 (whole file is gated on USE_EMU8950_OPL). Its hot functions are forced
 # SRAM-resident (see the __not_in_flash_func patch in 3rdparty/emu8950/emu8950.c
@@ -141,6 +149,11 @@ target_link_libraries(duke3d_game PRIVATE
     pico_psram
     pico_shared_usb_hid
     tinyusb_host
+    # Wii-extension pads on the codec's I2C bus, under the same
+    # WII_PIN_SDA != -1 convention as the NES pins; i2c_bus_recovery is the
+    # shared-bus clear that duke_wiipad.cpp (and now the codec) needs.
+    pico_shared_wiipad
+    i2c_bus_recovery
 )
 
 # USB host transport (see the ENABLE_PIO_USB block in the root CMakeLists).

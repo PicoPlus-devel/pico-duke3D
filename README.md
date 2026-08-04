@@ -50,6 +50,8 @@ lives in that one header.
 | Audio routing | **exclusive**: headphones *or* HDMI | **both** sinks always live | **both** sinks always live |
 | USB host | Pico-PIO-USB on GP1/GP2 | **native** RP2350 controller (OTG adapter) | **native** RP2350 controller (OTG adapter) |
 | Controller ports | — | two NES/SNES ports on PIO (shared CLK/LAT) | two NES/SNES ports on PIO (independent CLK/LAT) |
+| Wii extension port | GP20/21 — **the codec's own I2C bus** | GP0/1 (why there is no UART) | — |
+| Status LEDs | LED GP29 + **5 NeoPixels GP32 as a VU meter** | LED GP25 | LED GP25 |
 | PSRAM | 8 MB on CS1 = GP47 | on CS1 = **GP8** | 8 MB on CS1 = GP47 |
 | SD (SPI0) | MOSI 35 / MISO 36 / SCK 34 / CS 39 | MOSI 7 / MISO 4 / SCK 6 / CS 5 | MOSI 3 / MISO 4 / SCK 2 / CS 5 |
 | UART console | UART0 on GP44/45 | **none** — GP0/1 are the Wii connector | board default (GP0/1) |
@@ -70,12 +72,25 @@ Two consequences worth knowing on the Murmulator:
   out with it (poking `uart0` while the peripheral is held in reset would fault
   inside the fault handler). To get a console back, drop `NO_USE_UART` from
   `murmulatorm2_cflags.h` and `-DDUKE_NO_STDIO_UART=1` from the build script —
-  but that drives GP0/1.
+  but GP0/1 are the Wii extension port, and now genuinely driven as `i2c0`, so
+  you would have to give up [Wii pads](#wii-pads) to get the console back.
 * **PSRAM smaller than 8 MB still boots.** The 8 MB linker region is an
   address-space declaration; the heap top is clamped at boot to what
   `SetupPsram()` reports and the cache1d tile cache shrinks to fit. Roughly
   2.1 MB of engine arrays are the hard floor — below about 4 MB total the port
   is not worth running.
+
+Two notes on the last two rows:
+
+* **The Fruit Jam's Wii port is the codec's I2C bus**, pin for pin. An
+  uninitialised SNES-Classic pad holds SDA low, so the pad is brought up first —
+  before anything talks to the DAC — with the codec held in reset. Without that,
+  a pad attached at power-on means no sound at all. See `duke_wiipad_init()`.
+* **Status LEDs** are the plain onboard LED, blinked 60 game frames on / 60 off
+  (so its period follows the frame rate — roughly a second each way at 60 fps,
+  slower in a busy level), plus the Fruit Jam's five NeoPixels driven as an audio
+  VU meter. The meter is a 5-pixel bargraph, so it only exists on that board.
+  Both are in `src/pico/duke_leds.c`; set the pins to `-1` to switch them off.
 
 Adding a board is a `<tag>_cflags.h` plus a `<tag>-build.sh`; nothing in
 `CMakeLists.txt` is board-specific.
@@ -215,6 +230,18 @@ In-game failures work too: the console keeps recording every `printf` after the
 game takes the screen, so a fatal mid-level brings it back with the last 24 lines
 of log still on it. See `src/pico/duke_fatal.c`.
 
+Two things to read off the board itself:
+
+* **The onboard LED is the heartbeat.** It flips every 60 game frames, so a blink
+  means core0 is still presenting frames. Stuck on or off with a picture still on
+  screen means the game loop stopped; dark from power-on means it never reached
+  `Startup()`.
+* **No sound at all on the Fruit Jam, with a Wii pad attached?** That is the
+  shared I2C bus. The log will show `i2c_bus_clear` and
+  `tlv320 ... failed (attempt n/5)` lines; a retry that then succeeds is the
+  recovery working. A run of five failures with `SDA=0` means a pad is holding the
+  bus down — unplug it and reset to confirm.
+
 ## Controls
 
 Everything reaches the game as **DOS scancodes**. `duke_usb_input.cpp` posts them
@@ -228,15 +255,20 @@ There are **three gamepad layouts**, chosen with **PAD LAYOUT** in
 four-button [NES layout](#nes-pad-layout) for a vintage NES controller or a
 NES-shelled MantaPad, and a [Retro-Go layout](#retro-go-layout) modelled on
 [duke3d-go](https://github.com/DynaMight1124/retro-go/blob/megapack/duke3d-go/CONTROLS.md).
-The same menu carries **SHIFT MODE**, Retro-Go's held-START hotkey layer. Both
-settings persist in `duke3d.cfg` (`Misc/NesPadLayout` — a legacy key name — and
-`Misc/PadShiftLayer`) and apply to every pad at once, USB and the legacy ports
-alike.
+The same menu carries **SHIFT MODE**, Retro-Go's held-START hotkey layer, which
+**applies to the RETRO layout only** — see
+[SHIFT MODE is RETRO-only](#shift-mode-is-retro-only). Both settings persist in
+`duke3d.cfg` (`Misc/NesPadLayout` — a legacy key name — and `Misc/PadShiftLayer`)
+and apply to every pad at once: USB, the legacy NES/SNES ports and the
+[Wii extension port](#wii-pads) alike.
 
 ### Gamepad
 
-Up to two pads. `hid_app.cpp` folds the D-pad hat and the left analogue stick
-into the same direction bits, so either works.
+Up to two USB pads, plus both legacy ports and a Wii extension pad on the boards
+that have them — every source is OR-ed into one button word, so they all drive
+one Duke and a button held on one stays held as another releases it.
+`hid_app.cpp` folds the D-pad hat and the left analogue stick into the same
+direction bits, so either works.
 
 | Button | Sends | In game | In menus |
 |---|---|---|---|
@@ -279,11 +311,16 @@ In a menu the layer is ignored: **A** confirms, **B** and **START** go back, the
 D-pad navigates. That is why `menues.c` needs no changes of its own — `probe()`
 already takes Enter to confirm and Escape to go back.
 
-Three things worth knowing:
+Four things worth knowing:
 
 * **No Run button is left**, so switching the option on also turns Duke's own
   **AutoRun** on, and `CONFIG_ReadSetup` re-forces it at every startup. You are
   always running.
+* **This SELECT layer is not the SHIFT MODE option** and is not affected by it.
+  It is always on, because SELECT emits nothing by itself — there is no tap to
+  tell apart from a hold, so there is nothing to opt out of. SHIFT MODE governs a
+  different mechanism in a different layout; see
+  [SHIFT MODE is RETRO-only](#shift-mode-is-retro-only).
 * Both face-button pairs are accepted as the NES A/B, so the layout works from a
   SNES-shaped pad too — there **B** and **Y** sit where a NES pad's buttons are.
   (A NES-shelled MantaPad reports its buttons on io `A` and io `X`; a NES pad in
@@ -367,7 +404,30 @@ Four things worth knowing:
   what you asked for, so there is no Use on the way out.
 * **SHIFT MODE off removes the layer and the release latency both**: START goes
   back to being a plain immediate Use, since there is then nothing to tell apart.
-  It has no effect on the SNES or NES layouts, which have no START to spare.
+
+##### SHIFT MODE is RETRO-only
+
+**SHIFT MODE does nothing unless PAD LAYOUT is `RETRO`.** The GAMEPAD SETUP screen
+says so under the two rows — it prints `*** SHIFT MODE: RETRO LAYOUT ONLY ***`
+whenever another layout is selected.
+
+It is *inert*, not disabled: the menu row still toggles, and the value still
+persists to `Misc/PadShiftLayer`, so setting it under `SNES` is remembered and
+takes effect the moment you switch to `RETRO`. In the code
+(`src/pico/duke_usb_input.cpp`) `PadShiftLayer` is read at exactly two places,
+both inside `retroLayout()` — the `hold.reset()` guard that keeps the state
+machine from engaging, and the choice between Use-on-release and Use-on-press.
+`snesLayout()` and `nesLayout()` never look at it.
+
+Why only there: SHIFT MODE exists because RETRO puts **Use on START**, and START
+therefore has two jobs — a tap is Use, a long hold is the layer — which needs a
+timer to tell apart, and costs the 100 ms Use pulse described above. That is a
+real trade-off, so it is made optional. Neither of the other layouts has that
+problem. In the default SNES layout START is simply Escape. In the
+[NES layout](#nes-pad-layout) START is jump, and its shift layer hangs off
+**SELECT**, which emits nothing by itself — no tap, no hold, nothing to
+disambiguate and nothing to turn off. So the NES layout has a shift layer that is
+always on, and it is *not* this setting.
 
 #### MantaPad (cheap AliExpress SNES pad, VID 081f)
 
@@ -404,6 +464,50 @@ into the menu.
 USB input still works alongside the ports, through the RP2350's native USB
 controller — a pad or keyboard needs an OTG/host adapter on the module's own
 socket.
+
+### Wii pads
+
+The Fruit Jam (STEMMA QT, GP20/21) and the Murmulator M2 (GP0/1) also take a
+**NES Classic Mini**, **SNES Classic Mini** or **Wii Classic Controller (Pro)**
+pad over I2C, on an adapter such as the
+[Adafruit Wii Nunchuck Adapter #4836](https://www.adafruit.com/product/4836). It
+merges into the same scancode stream as everything else, so it works alongside a
+USB pad and the legacy ports, and it obeys the **PAD LAYOUT** and **SHIFT MODE**
+settings. `adafruitdvisd` has no such connector and compiles the whole thing away.
+
+The pad is polled at ~100 Hz and **is** hot-pluggable: plug one in at any time
+and it is picked up within a second, with a single ~200 ms hitch as the handshake
+runs. (USB, by contrast, wants everything plugged in before reset.)
+
+A **NES Classic Mini in the NES layout is exactly a NES controller** — A fires, B
+opens, START jumps, SELECT is the shift layer — so the
+[NES layout](#nes-pad-layout) table applies unchanged. A pad with the full set of
+buttons is best used in the default layout, where it is likewise
+indistinguishable from a USB SNES pad:
+
+| Button | In game | In menus |
+|---|---|---|
+| D-pad | move + turn | navigate |
+| **A** | — | **select / confirm** |
+| **B** | open the menu | back |
+| **START** | open the menu | back |
+| **X** | **fire** | — |
+| **Y** | open / use | — |
+| **L** | run | — |
+| **R** | strafe | — |
+| **SELECT** | jump | — |
+
+The one thing to know: a NES Classic and an SNES Classic **cannot be told apart
+on the wire** — they share the Wii Classic Controller Pro protocol and identity
+block. Their two demands conflict, because the NES layout deliberately accepts a
+NES pad's two buttons as *one from each* face-button pair (that is what makes the
+layout work from a MantaPad and from a DE-9 NES pad at once). So there is no
+single translation that suits both, and `wiiToButtons()` in `duke_usb_input.cpp`
+picks its table from the layout you have selected instead: NES-pad slots under
+**PAD LAYOUT = NES**, SNES-pad slots under **SNES** and **RETRO**. Switching
+layout therefore changes what a physical button reports — which is safe only
+because the pad layer already ignores every held button until you let go after a
+layout change.
 
 ### USB keyboard
 
@@ -553,10 +657,13 @@ src/pico/                      RP2350 platform layer (replaces BUILD's sdlayer.c
   pico_display.c               BUILD baselayer: video, palette, timer, input entry
   duke_audio.c duke_music.c    dual-sink mixer + OPL2 music
   duke_usb_input.cpp           pad/keyboard -> DOS scancodes (table above)
+  duke_wiipad.cpp              Wii-extension pads: shared-bus init, hot-plug
+  duke_leds.c ws2812.pio       LED heartbeat + NeoPixel VU meter
   duke_dostext.cpp             DOS startup screen
   duke_fatal.c                 fatal errors on that screen, then halt
   duke_fatfs_io.c              FatFs behind POSIX *and* newlib syscalls
-3rdparty/pico_shared_drivers   vendored pico_shared (HSTX/I2S/TLV320/PSRAM/SD/font)
+3rdparty/pico_shared_drivers   vendored pico_shared (HSTX/I2S/TLV320/PSRAM/SD/
+                               wiipad/i2c-recovery/font)
 3rdparty/emu8950               OPL2 emulator
 ```
 
@@ -580,3 +687,20 @@ src/pico/                      RP2350 platform layer (replaces BUILD's sdlayer.c
   keep that check if you touch the USB wiring.
 - **Core voltage stays at `VREG_VOLTAGE_1_50` for 378 MHz.** 1.60 V bootloops
   some boards.
+- **The Wii pad must be brought up before anything touches the codec**, because
+  on the Fruit Jam they share SDA/SCL. `duke_wiipad_init()` therefore sits in
+  `main()`, long before `DSL_Init()`, and holds the DAC in reset while it clears
+  the bus. Moving it later costs all audio whenever a pad is attached at
+  power-on. The corresponding half of the fix is in the vendored
+  `tlv320dac3100.c`: a settle gap plus retries on every register access, and an
+  `i2c_bus_clear()` before each init attempt.
+- **`duke_leds_init()` must stay the last PIO claim.** GPIO 32 needs a PIO whose
+  GPIO base can be moved to 16, and that is only possible on a *completely
+  unused* PIO — so if it runs before I2S or PIO-USB have claimed theirs, it will
+  take one of their state machines instead of pio2. Its call site right after
+  `Startup()` is load-bearing.
+- **`wiiToButtons()` reads the live PAD LAYOUT, on purpose.** A NES Classic and
+  an SNES Classic are indistinguishable on the wire and want opposite face-button
+  slots, so there is no one fixed table; see [Wii pads](#wii-pads). The
+  `settling` latch in `pollGamePads()` is what makes a mid-game layout switch
+  safe, since it changes what a physical button reports.

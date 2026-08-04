@@ -40,6 +40,7 @@
 #include "tlv320dac3100.h"
 #include "hstx_packet.h"              // pico_hdmi data-island audio
 #include "hstx_data_island_queue.h"
+#include "duke_leds.h"                // duke_vu_add_chunk (stubs out with no strip)
 
 #include "../Game/audiolib/dsl.h"
 
@@ -373,7 +374,9 @@ static void __not_in_flash_func(pump_once)(int max_divisions)
         s_callback();   // MV_ServiceVoc: mixes next division, advances MV_MixPage
         STAGE_T(t2);
         uint8_t *div = (uint8_t *)&s_buffer[MV_MixPage * s_divsize];
-        if ((s_mixmode & (STEREO | SIXTEEN_BIT)) == (STEREO | SIXTEEN_BIT)) {
+        const bool s16_stereo =
+            (s_mixmode & (STEREO | SIXTEEN_BIT)) == (STEREO | SIXTEEN_BIT);
+        if (s16_stereo) {
             extern void duke_music_mix(int16_t *stereo, int frames);
             duke_music_mix((int16_t *)div, frames_per_div);
         }
@@ -382,6 +385,14 @@ static void __not_in_flash_func(pump_once)(int max_divisions)
         STAGE_ADD(s_us_lock,  t1, t0);
         STAGE_ADD(s_us_svc,   t2, t1);
         STAGE_ADD(s_us_music, t3, t2);
+
+        // VU meter tap: one pass over the left channel of the division we are
+        // about to hand to the sink. After the music mix so the meter shows what
+        // is actually heard, outside the audiolib lock so it cannot lengthen the
+        // critical section, and before the push so it is written once rather than
+        // once per sink. Compiles to nothing on a board without a strip.
+        if (s16_stereo)
+            duke_vu_add_chunk((const int16_t *)div, (unsigned)frames_per_div);
 
         // Push OUTSIDE the audiolib lock. The pump lock still guarantees only
         // one pumper is here, so the sink helpers' static state is safe.

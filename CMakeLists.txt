@@ -158,6 +158,11 @@ option(DUKE_NESPAD "Poll legacy NES/SNES controller ports over PIO" OFF)
 # --- Vendored pico_shared drivers -------------------------------------------
 # Video (HSTX/HDMI), audio (I2S + TLV320 codec + headphone detect), PSRAM,
 # SD/FatFs, and USB HID input (keyboard/mouse/gamepads + XInput).
+#
+# i2c_bus_recovery goes first because tlv320dac3100 links it: the codec shares
+# SDA/SCL with the Wii extension port, and an uninitialised pad on that bus can
+# hold SDA low so every codec register access times out.
+add_subdirectory(3rdparty/pico_shared_drivers/drivers/i2c_bus_recovery)
 add_subdirectory(3rdparty/pico_shared_drivers/drivers/tlv320dac3100)
 add_subdirectory(3rdparty/pico_shared_drivers/drivers/pico_audio_i2s)
 add_subdirectory(3rdparty/pico_shared_drivers/drivers/pico_hdmi)
@@ -168,6 +173,12 @@ add_subdirectory(3rdparty/pico_shared_drivers/usb_hid)
 if (DUKE_NESPAD)
     add_subdirectory(3rdparty/pico_shared_drivers/nespad)
 endif()
+# Wii-extension pads (NES/SNES Classic Mini, Wii Classic Controller Pro) over
+# I2C. Unconditional, unlike nespad: the whole translation unit is wrapped in
+#   #if WII_PIN_SDA >= 0 and WII_PIN_SCL >= 0
+# and the board header that defines those pins is force-included above, so a
+# board without a connector compiles it away to an empty object.
+add_subdirectory(3rdparty/pico_shared_drivers/wiipad)
 
 # Duke3D BUILD engine + game logic (static lib; platform layer + link in src/pico).
 include(cmake/duke_engine.cmake)

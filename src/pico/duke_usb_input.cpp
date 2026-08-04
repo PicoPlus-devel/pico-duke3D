@@ -44,6 +44,8 @@
 //  arrows. That is what keeps menues.c untouched -- probe() already takes Enter
 //  to confirm and Escape to go back. There is no button left for Run, so
 //  enabling the option forces Duke's own AutoRun on (see Game/config.c).
+//  This SELECT layer is ALWAYS ON and is not the SHIFT MODE option -- see the
+//  PadShiftLayer declaration below.
 //
 //  RETRO layout, Retro-Go's duke3d-go arrangement (see its CONTROLS.md). Their
 //  handhelds have ten buttons and a SNES pad has eight: OPTION only duplicated
@@ -67,9 +69,9 @@
 //  otherwise be locked out of the menu -- it costs one visible weapon switch on
 //  the way in, which is why it is not the primary chord.
 //
-//  SHIFT layer (SHIFT MODE option, RETRO only). Duke wants more actions than a
-//  pad has buttons, so holding START for 500 ms turns the D-pad into the
-//  inventory:
+//  SHIFT layer (the SHIFT MODE option -- RETRO ONLY, it is read nowhere else).
+//  Duke wants more actions than a pad has buttons, so holding START for 500 ms
+//  turns the D-pad into the inventory:
 //    D-pad up     -> Enter             (use inventory item)
 //    D-pad down   -> J key             (jetpack)
 //    D-pad l/r    -> [ and ]           (previous / next item)
@@ -113,12 +115,16 @@
 //  Init/poll pattern and the PIO-USB configuration mirror fruitjam-doom's
 //  d_main.c / i_usbhid.cpp (proven on this exact board).
 //
-//  Two things vary by board, both keyed off the force-included cflags header:
+//  Three things vary by board, all keyed off the force-included cflags header:
 //    HAS_USBPIO   present -> Pico-PIO-USB host on PIN_USB_HOST_DP/DM;
 //                 absent  -> the RP2350's native USB controller (Murmulator M2,
 //                 where a pad plugs in through an OTG adapter).
-//    NES_PIN_CLK  present -> legacy NES/SNES ports polled over PIO, folded
+//    NES_PIN_CLK  != -1 -> legacy NES/SNES ports polled over PIO, folded
 //                 into the same scancode stream as the USB pads.
+//    WII_PIN_SDA  != -1 -> a Wii extension pad (NES/SNES Classic Mini, Wii
+//                 Classic Controller (Pro)) polled over I2C, folded in the same
+//                 way. Its face buttons are translated per PAD LAYOUT; see
+//                 wiiToButtons() for why that cannot be one fixed table.
 //
 #include <stdio.h>
 #include <stdint.h>
@@ -157,6 +163,17 @@
 #define DUKE_HAS_NESPAD_1 0
 #endif
 
+// Wii-extension pads on I2C (NES Classic Mini, SNES Classic Mini, Wii Classic
+// Controller (Pro)), through the duke_wiipad.cpp glue. Same -1-disables
+// convention on the pin macros, and folded into the same button word below.
+#if defined(WII_PIN_SDA) && WII_PIN_SDA >= 0 && \
+    defined(WII_PIN_SCL) && WII_PIN_SCL >= 0
+#define DUKE_HAS_WIIPAD 1
+#include "duke_wiipad.h"
+#else
+#define DUKE_HAS_WIIPAD 0
+#endif
+
 extern "C" {
 void pico_display_post_key(uint8_t rawcode);   // pico_display.c -> keyhandler()
 void duke_usb_init(void);
@@ -166,6 +183,13 @@ void duke_usb_poll(void);
 // they are toggled (Game/config.c, persisted as Misc/NesPadLayout -- a legacy
 // key name -- and Misc/PadShiftLayer).
 extern int32_t PadLayout;
+// PadShiftLayer is read ONLY by retroLayout(), in two places: the hold.reset()
+// guard and the Use-on-release-vs-on-press choice. It is meaningless in the other
+// two layouts, and menues.c prints "SHIFT MODE: RETRO LAYOUT ONLY" to say so. The
+// reason is that only RETRO gives START two jobs (tap = Use, long hold = layer),
+// which needs a timer to separate and costs the 100 ms Use pulse -- a trade-off
+// worth making optional. nesLayout's SELECT layer needs no such switch: SELECT
+// emits nothing on its own, so it is always on and is NOT this setting.
 extern int32_t PadShiftLayer;
 // Game/menues.c. The NES and RETRO layouts need this because one button has to
 // mean fire in game and confirm in a menu.
@@ -575,12 +599,80 @@ namespace
     }
 #endif // DUKE_HAS_NESPAD
 
+#if DUKE_HAS_WIIPAD
+    // Same job as nesToButtons() for the I2C pads, but it CANNOT share the table:
+    // wiipad_read() reports bit0=A, 1=B, 2=Select, 3=Start, 4-7=dpad, 8=X, 9=Y,
+    // 10=L, 11=R — its own order, not nespad's SNES serial order. Select, Start,
+    // the D-pad and the shoulders line up and pass straight through; the four
+    // face buttons are the whole problem.
+    //
+    // A NES Classic Mini only ever sets bits 0 and 1, and nesLayout() folds
+    // (io A | io B) into its NES A and (io X | io Y) into its NES B — so the two
+    // face buttons of a NES Classic have to land one in each pair. A Wii Classic
+    // Controller Pro (and an SNES Classic Mini, which is the same thing on the
+    // wire — they share the Classic Controller Pro protocol AND identity block,
+    // so they cannot be told apart) wants all four buttons on their namesakes
+    // instead, which puts A and B in the same pair. No single table does both.
+    //
+    // So pick the table from the layout that is actually selected. The result is
+    // that a NES Classic in the NES layout is byte-for-byte a real NES
+    // controller, and a Wii Classic Pro in the SNES or RETRO layout is
+    // byte-for-byte a USB SNES pad — fire on X, confirm on A. (The SNES/RETRO row
+    // is also exactly upstream's own ctFromWii() in pico_shared/menu.cpp.)
+    //
+    // Switching layout therefore changes what a physical button reports. That is
+    // safe because pollGamePads' `settling` latch already suppresses every
+    // non-direction button until they are all released after PadLayout moves —
+    // the same reason it exists for the USB pads.
+    uint32_t wiiToButtons(uint16_t w, int8_t layout)
+    {
+        using Button = io::GamePadState::Button;
+        uint32_t b = 0;
+        if (w & 0x0004) b |= Button::SELECT;
+        if (w & 0x0008) b |= Button::START;
+        if (w & 0x0010) b |= B(Button::UP);
+        if (w & 0x0020) b |= B(Button::DOWN);
+        if (w & 0x0040) b |= B(Button::LEFT);
+        if (w & 0x0080) b |= B(Button::RIGHT);
+        if (w & 0x0400) b |= Button::L;
+        if (w & 0x0800) b |= Button::R;
+        if (layout == PAD_NES)
+        {
+            // One face button in each of nesLayout's two pairs, so a NES Classic
+            // gets A = fire and B = open. X and Y do not exist on that pad; on a
+            // Classic Pro they land as duplicates of the same two actions, which
+            // is harmless.
+            if (w & 0x0001) b |= Button::A;      // wii A -> NES A (fire)
+            if (w & 0x0002) b |= Button::Y;      // wii B -> NES B (open)
+            if (w & 0x0100) b |= Button::X;      // wii X -> NES B as well
+            if (w & 0x0200) b |= Button::B;      // wii Y -> NES A as well
+        }
+        else
+        {
+            // Namesakes, i.e. indistinguishable from a USB SNES pad.
+            if (w & 0x0001) b |= Button::A;
+            if (w & 0x0002) b |= Button::B;
+            if (w & 0x0100) b |= Button::X;
+            if (w & 0x0200) b |= Button::Y;
+        }
+        return b;
+    }
+#endif // DUKE_HAS_WIIPAD
+
     void pollGamePads()
     {
-        // Every source is OR-ed into one button word: the two USB pads, plus
-        // both NES/SNES ports on the boards that have them (nesButtons already
-        // merges those two). So several pads drive one Duke, and a button held
-        // on one of them stays held even as another releases the same button.
+        // Clamped here as well as in CONFIG_ReadSetup: that clamps the file, but
+        // this layer reads the option live and must not dispatch on a value it
+        // does not know. Read before the gather because the Wii pad's face-button
+        // translation depends on it (see wiiToButtons).
+        const int8_t layout = (PadLayout > PAD_SNES && PadLayout < PAD_COUNT)
+                                  ? (int8_t)PadLayout : (int8_t)PAD_SNES;
+
+        // Every source is OR-ed into one button word: the two USB pads, both
+        // NES/SNES ports on the boards that have them (nesButtons already merges
+        // those two), and a Wii extension pad on the boards that have that. So
+        // several pads drive one Duke, and a button held on one of them stays
+        // held even as another releases the same button.
         uint32_t buttons = 0;
         for (int i = 0; i < 2; i++)
         {
@@ -589,6 +681,11 @@ namespace
         }
 #if DUKE_HAS_NESPAD
         buttons |= nesToButtons(nesButtons());
+#endif
+#if DUKE_HAS_WIIPAD
+        // Rate-limited to 10 ms inside duke_wiipad_read(): the I2C transaction
+        // blocks ~400 us and this runs from duke_pico_idle()'s 2 ms gate.
+        buttons |= wiiToButtons(duke_wiipad_read(), layout);
 #endif
 
         // The only way to change layout is to press A on the menu item, so a
@@ -599,10 +696,6 @@ namespace
         // retroLayout, because it also has to catch the directions.)
         static int8_t prev_layout = -1;
         static bool settling = false;
-        // Clamped again here: CONFIG_ReadSetup clamps the file, but this layer
-        // reads the option live and must not dispatch on a value it does not know.
-        const int8_t layout = (PadLayout > PAD_SNES && PadLayout < PAD_COUNT)
-                                  ? (int8_t)PadLayout : (int8_t)PAD_SNES;
         if (prev_layout != layout)
         {
             prev_layout = layout;

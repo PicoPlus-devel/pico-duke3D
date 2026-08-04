@@ -20,6 +20,7 @@
 
 #include "video_output.h"          // pico_hdmi
 #include "duke_dostext.h"
+#include "duke_leds.h"
 #include "hstx_data_island_queue.h"
 
 // BUILD engine headers (declarations + functions we drive).
@@ -399,6 +400,13 @@ void _nextpage(void)
     // _handle_events -> duke_pico_idle also drains the deferred sound
     // callbacks, so there is no separate dispatch needed here.
     _handle_events();
+
+    // Onboard LED heartbeat plus the VU meter repaint on boards with a strip.
+    // Once per game frame, and deliberately NOT in duke_pico_idle(): that hook
+    // fires thousands of times per frame from the engine's render inner loops.
+    // Ahead of the s_video_up bail-out below so the heartbeat still runs if the
+    // display never came up — on a UART-less board it is the only sign of life.
+    duke_leds_frame(s_page_count);
 
     if (!s_video_up) return;
 
