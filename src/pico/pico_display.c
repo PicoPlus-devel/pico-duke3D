@@ -49,6 +49,7 @@ extern int32_t *horizlookup, *horizlookup2;
 static uint8_t  s_fb8[FB_W * FB_H];       // 8bpp — frameplace points here
 static uint16_t s_rgb[FB_W * FB_H];       // RGB555 — scanned out by core1
 static uint16_t s_pal555[256];            // palette lookup (RGB555)
+static uint8_t  s_pal_bgr888[256 * 3];    // same palette, 8-bit BGR (screenshots)
 
 static volatile uint32_t s_frame_counter = 0;   // HSTX scanout frames (core1)
 static uint32_t s_page_count = 0;               // _nextpage calls = GAME frames
@@ -246,10 +247,29 @@ int VBE_setPalette(uint8_t *palettebuffer)
         uint32_t r = *p++;
         p++;                               // reserved
         s_pal555[i] = (uint16_t)(((r >> 1) << 10) | ((g >> 1) << 5) | (b >> 1));
+        // Same entry as 8-bit BGR, for screencapture(). 0..63 -> 0..255 is the
+        // scaling display.c uses for its own dumps (v / 63.0 * 255), and BGR
+        // rather than RGB because that is the order PNGenc's PLTE writer reads
+        // its palette in (3rdparty/PNGenc/png.inl: [i*3+2] is red).
+        s_pal_bgr888[i * 3 + 0] = (uint8_t)((b * 255u) / 63u);
+        s_pal_bgr888[i * 3 + 1] = (uint8_t)((g * 255u) / 63u);
+        s_pal_bgr888[i * 3 + 2] = (uint8_t)((r * 255u) / 63u);
     }
     s_pal_dirty = true;
     return 0;
 }
+
+// The live palette in 8-bit BGR, for duke_screenshot.cpp.
+//
+// Built here, next to s_pal555, so a screenshot always matches what is on the
+// HDMI output -- including brightness (setbrightness() feeds this through
+// britable[]) and every in-game tint: pain red, underwater blue, night vision.
+//
+// NOT lastPalette above: that memcpy copies the first 768 bytes of a 1024-byte
+// 4-byte-stride BGR0 array, so it is skewed after the first setbrightness().
+// Deriving this from s_pal555 would also work but would throw away 3 bits per
+// channel; 768 bytes buys the exact values.
+const uint8_t *duke_display_palette_bgr888(void) { return s_pal_bgr888; }
 
 int VBE_getPalette(int32_t start, int32_t num, uint8_t *palettebuffer)
 {
@@ -468,7 +488,10 @@ void _updateScreenRect(int32_t x, int32_t y, int32_t w, int32_t h)
 uint8_t readpixel(uint8_t *location) { return *location; }
 void    drawpixel(uint8_t *location, uint8_t pixel) { *location = pixel; }
 
-int screencapture(char *filename, uint8_t inverseit) { (void)filename;(void)inverseit; return 0; }
+// screencapture() itself lives in duke_screenshot.cpp (it needs PNGenc, which is
+// C++). It reads the frame through get_framebuffer() above and the palette
+// through duke_display_palette_bgr888(), so nothing here has to be exposed
+// beyond those two.
 
 // ---------------------------------------------------------------------------
 // 2D / 16-colour helpers (editor/overhead map) — stubbed for M2.

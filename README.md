@@ -595,7 +595,7 @@ Function keys, handled by the game itself and **not** rebindable:
 | **F9** | quickload |
 | **F10** | quit |
 | **F11** | brightness up; **Shift+F11** down |
-| **F12** | screenshot — **reports "SCREEN SAVED" but writes nothing**, because `screencapture()` is a stub on this port (`src/pico/pico_display.c`) |
+| **F12** | screenshot — writes `/screenshots/dukeNNNN.png` on the SD card (see below) |
 
 #### Two deliberate gaps
 
@@ -635,6 +635,30 @@ save — the slot shows blank. With a keyboard you can type a name at step 4.
 
 `F6`/`F9` skip the name prompt once you have made one ordinary save, but they are
 **not on the pad** — a SNES pad has no spare button, so that would need a chord.
+
+### Screenshots
+
+**F12** writes the current frame to the SD card as
+`/screenshots/duke0000.png`, `duke0001.png` and so on — the folder is created the
+first time, at the **root** of the card so it is easy to find when you put the
+card in a PC. Numbering picks the lowest free slot, so it carries on where it left
+off after a reboot. You will see *SCREEN SAVED* on screen, or *CAN'T WRITE FILE!*
+if the card is full or write-protected. F12 also works on the intro logo and on the
+end-of-level bonus screen.
+
+The files are 320×200 8-bit PNGs — the game's own resolution and palette, saved
+without conversion, so what you get is exactly what Duke drew, tints and status bar
+included. Expect 10–25 KB each.
+
+Two things to expect. The game **pauses for a moment** while it writes: the PNG
+encoder's workspace lives in PSRAM to keep it out of the way of everything else,
+and PSRAM is slower to work in. Music keeps playing throughout — that runs on the
+other core. And the pixels are non-square, exactly as they were on a 1996 VGA
+monitor: a viewer that respects the 320×200 size will show the picture slightly
+taller than the 4:3 you saw on the TV.
+
+If a serial console is attached, each capture logs what it did — the file it chose,
+the size, and how long it took.
 
 ## Layout
 

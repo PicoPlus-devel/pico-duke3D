@@ -187,6 +187,27 @@ function(duke_use_psram_linker_script target)
                "        *libduke.a:${_o}(.bss .bss.* .sbss .sbss.* COMMON)\n")
     endforeach()
 
+    # 3b) The screenshot encoder -> PSRAM. This one goes the OTHER way from the
+    #     audio objects above: it is platform-layer code, so its .bss would
+    #     default to SRAM, and we push it out instead of pulling it in.
+    #
+    #     PNGenc's entire footprint is one ~47 KB PNGENCIMAGE (a 32 KB zlib
+    #     window plus deflate_state, two scanline buffers, the palette and a
+    #     2 KB file buffer). Free SRAM here is only ~194 KB between the end of
+    #     .bss and the STACK region, and PSRAM has megabytes spare, so a
+    #     once-per-F12 cold path has no business in SRAM.
+    #
+    #     Placed by the LINKER rather than allocated from psram_alloc() at
+    #     runtime, for two reasons: there is then no allocation that can fail,
+    #     and no ordering dependency on cache1d's tile cache, which sizes itself
+    #     by asking psram_alloc for 4 MB and shrinking until it succeeds -- i.e.
+    #     it will happily take whatever is left. Being inside
+    #     __psram_bss_start..__psram_bss_end also means duke_psram_init()
+    #     already zeroes it.
+    #
+    #     Safe as .bss because PNGENC has no constructor, so there is no static
+    #     initialiser that could run before SetupPsram() maps the window. Both
+    #     entry points are called from the game loop, long after.
     set(_psram_section
 "    .audio_bss (NOLOAD) : {
         . = ALIGN(4);
@@ -198,6 +219,7 @@ ${_audiolib_bss}        . = ALIGN(4);
     .psram_bss (NOLOAD) : {
         . = ALIGN(4);
         __psram_bss_start = .;
+        *duke_screenshot.cpp.o(.bss .bss.* COMMON)
         *libduke.a:*(.bss .bss.* .sbss .sbss.* COMMON)
         . = ALIGN(32);
         __psram_bss_end = .;
@@ -207,6 +229,12 @@ ${_audiolib_bss}        . = ALIGN(4);
 
     .bss (NOLOAD) : {")
     string(REPLACE "    .bss (NOLOAD) : {" "${_psram_section}" _ld "${_ld}")
+    if (NOT _ld MATCHES "duke_screenshot")
+        message(FATAL_ERROR
+            "psram_linker: could not splice .psram_bss into ${_src}. Without it "
+            "the engine arrays and the 47 KB screenshot encoder both fall back "
+            "to SRAM, which does not fit.")
+    endif()
 
     file(WRITE "${_dst}" "${_ld}")
     pico_set_linker_script(${target} "${_dst}")

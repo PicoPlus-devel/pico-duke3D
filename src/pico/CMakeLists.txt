@@ -55,6 +55,17 @@ add_executable(duke3d_game
     duke_audio.c
     duke_music.c
     ${CMAKE_SOURCE_DIR}/3rdparty/emu8950/emu8950.c
+    duke_screenshot.cpp
+    # PNGenc + the deflate half of zlib, for F12 screenshots. Its ~47 KB
+    # workspace is pushed into PSRAM by cmake/psram_linker.cmake, so this costs
+    # flash only. (pico-bootLoader vendors the same author's PNGdec, which is the
+    # inflate half -- decode only, no use for writing.)
+    ${CMAKE_SOURCE_DIR}/3rdparty/PNGenc/PNGenc.cpp
+    ${CMAKE_SOURCE_DIR}/3rdparty/PNGenc/deflate.c
+    ${CMAKE_SOURCE_DIR}/3rdparty/PNGenc/trees.c
+    ${CMAKE_SOURCE_DIR}/3rdparty/PNGenc/adler32.c
+    ${CMAKE_SOURCE_DIR}/3rdparty/PNGenc/crc32.c
+    ${CMAKE_SOURCE_DIR}/3rdparty/PNGenc/zutil.c
     duke_platform_stub.c
     duke_net_stub.c
 )
@@ -65,7 +76,50 @@ add_executable(duke3d_game
 target_include_directories(duke3d_game PRIVATE
     ${CMAKE_CURRENT_LIST_DIR}
     ${CMAKE_SOURCE_DIR}/3rdparty/emu8950
+    ${CMAKE_SOURCE_DIR}/3rdparty/PNGenc
     ${CMAKE_SOURCE_DIR}/3rdparty/pico_shared_drivers/fonts   # pico_shared 8x8 font
+)
+
+# --- PNGenc compile-time configuration -------------------------------------
+#
+# crc32=pngenc_crc32: the engine's OWN crc32() (src/Engine/filesystem.c:191)
+# collides with zlib's. Renaming zlib's is not cosmetic -- it is the safe
+# resolution. PNG's chunk CRCs come from png.inl's self-contained PNGCalcCRC(),
+# and zlib's crc32 is reached only from deflate.c's gzip-wrapper paths, which we
+# never take (positive windowBits => zlib wrapper => adler32). So the tempting
+# fix is to just not compile crc32.c -- and that would be a trap: deflate.c's
+# calls would then quietly bind to Duke's crc32(uint8_t *, unsigned int), a
+# different signature entirely. The duplicate-symbol error is what exposed that,
+# so keep crc32.c in the build and give it its own name. Must be set on every TU
+# that sees zlib.h so the declaration and the definition agree.
+#
+# __MCUXPRESSO: PNGenc ships Arduino-style platform gates and would otherwise
+# pull in <Arduino.h>. This steers it onto the plain-stdlib path.
+#
+# NOT __LINUX__, which is what pico-bootLoader uses for the same purpose on
+# PNGdec. All three of PNGenc.h's escape macros (__MACH__, __LINUX__,
+# __MCUXPRESSO) dodge <Arduino.h>, but __LINUX__ and __MACH__ ALSO select
+# MEM_SHRINK 0 -- a 256 KB pool instead of 32 KB, and a 32 KB deflate window
+# instead of 4 KB. The window matters as much as the pool: the workspace lives in
+# PSRAM, behind a QMI bus whose 8 KB XIP cache is shared with flash code, so a
+# bigger working set is slower, not better. __MCUXPRESSO leaves MEM_SHRINK at its
+# embedded default of 3.
+#
+# Set from the build rather than in a source file because MEM_SHRINK sizes
+# PNGENCIMAGE: if two TUs disagreed on sizeof, PNGENC::open()'s
+# memset(&_png, 0, sizeof(PNGENCIMAGE)) would run off the end of the object.
+set_source_files_properties(
+    ${CMAKE_SOURCE_DIR}/3rdparty/PNGenc/deflate.c
+    ${CMAKE_SOURCE_DIR}/3rdparty/PNGenc/trees.c
+    ${CMAKE_SOURCE_DIR}/3rdparty/PNGenc/adler32.c
+    ${CMAKE_SOURCE_DIR}/3rdparty/PNGenc/crc32.c
+    ${CMAKE_SOURCE_DIR}/3rdparty/PNGenc/zutil.c
+    PROPERTIES COMPILE_DEFINITIONS "crc32=pngenc_crc32"
+)
+set_source_files_properties(
+    ${CMAKE_SOURCE_DIR}/3rdparty/PNGenc/PNGenc.cpp
+    duke_screenshot.cpp
+    PROPERTIES COMPILE_DEFINITIONS "__MCUXPRESSO;crc32=pngenc_crc32"
 )
 
 # WS2812 program for the Fruit Jam VU meter, a verbatim copy of

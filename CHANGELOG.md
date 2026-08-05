@@ -39,6 +39,11 @@ the RP2350, with `DUKE3D.GRP` streamed from the SD card.
 - Saved games and settings on the SD card, next to the GRP
   (`/roms/duke3d/game0.sav` … `game9.sav`, `/roms/duke3d/duke3d.cfg`). Nothing is
   written to flash. Saving needs no keyboard: the pad's A accepts an empty name
+- **F12 screenshots**, as 320×200 8-bit PNGs in `/screenshots/dukeNNNN.png` at the
+  root of the SD card, numbered from the lowest free slot. The game's own frame
+  and palette go out unconverted, so the shot matches the screen exactly. The
+  encoder (bitbank2 PNGenc) keeps its ~47 KB workspace in PSRAM, so the feature
+  costs no SRAM
 - A DOS-style startup screen on the HDMI output, live from the first line of
   boot, that keeps recording every `printf` for the whole run
 - Fatal errors — no PSRAM, no SD card, no GRP, a corrupt GRP, CON errors — are

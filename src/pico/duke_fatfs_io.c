@@ -260,6 +260,24 @@ static int duke_stat(const char *path, struct stat *st)
 int stat(const char *path, struct stat *st)  { return duke_stat(path, st); }
 int _stat(const char *path, struct stat *st) { return duke_stat(path, st); }
 
+// Create a directory. takescreenshot() (game.c) needs /screenshots, and
+// global.c:884 creates the Apogee path; both used to call a no-op in
+// duke_platform_stub.c, so the directory never appeared and every write into it
+// failed with ENOENT.
+//
+// FF_FS_MINIMIZE is 0 and FF_FS_READONLY is 0 in our ffconf.h, so f_mkdir is
+// compiled in.
+int mkdir(const char *path, mode_t mode)
+{
+    (void)mode;                 // FatFs has no permission model to apply it to
+    FRESULT fr = f_mkdir(strip_dotslash(path));
+    // Both callers create unconditionally, without checking first, so an
+    // existing directory has to read as success or they treat it as failure.
+    if (fr == FR_OK || fr == FR_EXIST) return 0;
+    errno = (fr == FR_NO_PATH) ? ENOENT : EIO;
+    return -1;
+}
+
 // Duke removes its temp file on the way out (gameexit: unlink("duke3d.tmp")),
 // and the config writer replaces files in place.
 int unlink(const char *path)

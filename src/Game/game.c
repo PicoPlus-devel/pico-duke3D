@@ -10635,6 +10635,37 @@ void CenterRudder(void)
 void takescreenshot(void)
 {
 	char  szFilename[256];
+#ifdef PLATFORM_PICO
+	// Bare-metal port: the name comes from duke_screenshot.cpp instead, as
+	// /screenshots/dukeNNNN.png on the SD card. Three reasons the block below
+	// cannot be used as it stands:
+	//
+	//  1. There is no RTC on this board, so the date/time name would read
+	//     1970 + uptime.
+	//  2. It is broken upstream anyway -- the nice name is built into text[],
+	//     but the two sprintf()s below format `tempbuf` into the path, and
+	//     tempbuf is the shared 2 KB scratch global. The filename was whatever
+	//     happened to be left in it.
+	//  3. mkdir(SCREENSHOTPATH) used to be a no-op on this port, so the
+	//     directory never existed. (That one is now fixed for real, over
+	//     f_mkdir in src/pico/duke_fatfs_io.c.)
+	//
+	// The existence pre-flight is folded into next_path(), which returns the
+	// first free slot, so SafeFileExists() has nothing left to add here.
+	extern int duke_screenshot_next_path(char *out, int outsz);
+
+	// Report on what actually happened, not just on the pre-flight: a card that
+	// fills up mid-write makes screencapture() fail, and saying "SCREEN SAVED"
+	// to that would be a lie.
+	if(duke_screenshot_next_path(szFilename, sizeof(szFilename)) != 0 ||
+	   screencapture(szFilename, 0) != 0)
+		sprintf(fta_quotes[103],"CAN'T WRITE FILE!");
+	else
+	{
+		sprintf(fta_quotes[103],"SCREEN SAVED");
+		sound(EXITMENUSOUND);
+	}
+#else
 	int i;
 	char  score[20];
 	time_t time4file;
@@ -10704,6 +10735,7 @@ void takescreenshot(void)
 	}
 	else
 		sprintf(fta_quotes[103],"CAN'T WRITE FILE!");
+#endif
 
 	FTA(103,&ps[screenpeek],1);
 
