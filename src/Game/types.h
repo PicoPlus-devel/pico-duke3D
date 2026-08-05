@@ -71,8 +71,15 @@ typedef float64                 appfloat;
 //
 //***************************************************************************
 
+// Guarded: the port's own translation units (src/pico) include <stdbool.h>
+// before they pull in duke3d.h, and redefining true/false is a warning there.
+// stdbool's 1/0 are the same values these expand to, so first definition wins.
+#ifndef true
 #define true ( 1 == 1 )
+#endif
+#ifndef false
 #define false ( ! true )
+#endif
 
 //***************************************************************************
 //

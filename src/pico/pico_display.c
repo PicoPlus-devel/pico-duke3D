@@ -27,6 +27,7 @@
 #include "build.h"
 #include "engine.h"
 #include "display.h"
+#include "draw.h"                  // setBytesPerLine (rasteriser stride)
 
 // ---------------------------------------------------------------------------
 // Engine framebuffer globals (were defined in display.c).
@@ -296,6 +297,7 @@ void pico_display_post_key(uint8_t rawcode)
 extern void duke_usb_poll(void);
 extern void duke_audio_poll_headphone(void);
 extern void duke_audio_pump(void);
+void duke_pico_idle(void);         // defined below; also called from the engine
 
 void _handle_events(void)
 {

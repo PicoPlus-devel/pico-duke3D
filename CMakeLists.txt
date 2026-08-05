@@ -54,6 +54,10 @@ endif()
 if (NOT DEFINED USE_HSTX)
     set(USE_HSTX 1 CACHE STRING "Use the HSTX HDMI driver")
 endif()
+# Every build script passes -DUSE_HSTX=1, and the video path is selected by the
+# board header's USE_HSTX, not by this variable. Read it once so a configure run
+# does not end with CMake's "Manually-specified variables were not used" warning.
+message(STATUS "pico-duke3D video: HSTX=${USE_HSTX}")
 
 # PICO_SDK_PATH is expected in the environment or passed with -DPICO_SDK_PATH.
 if (NOT PICO_SDK_PATH)

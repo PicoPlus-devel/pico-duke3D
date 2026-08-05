@@ -822,7 +822,16 @@ void duke_usb_init(void)
 
     tuh_configure(CFG_TUH_RPI_PIO_USB, TUH_CFGID_RPI_PIO_USB_CONFIGURATION, &pio_cfg);
     printf("usb: PIO-USB host on D+/D- GP%d/GP%d\n", PIN_USB_HOST_DP, PIN_USB_HOST_DM);
-    tuh_init(CFG_TUH_RPI_PIO_USB);
+    // tuh_init(rhport) is deprecated since TinyUSB 0.20 in favour of
+    // tusb_init(rhport, rh_init); same shape pico_shared uses (FrensHelpers.cpp,
+    // pio_usb_board_init/initAll). It is what tuh_init() expanded to anyway, and
+    // hcd_pio_usb.c ignores rh_init->speed, so the roothub still comes up
+    // full-speed as before.
+    const tusb_rhport_init_t host_init = {
+        .role  = TUSB_ROLE_HOST,
+        .speed = TUSB_SPEED_AUTO,
+    };
+    tusb_init(CFG_TUH_RPI_PIO_USB, &host_init);
 #else
     // Native RP2350 USB controller (rhport 0), selected by tusb_config.h when
     // the board header omits HAS_USBPIO. No PIO program, no VBUS switch and no
@@ -830,7 +839,11 @@ void duke_usb_init(void)
     // needs an OTG/host adapter. PLL_USB is left at its stock 48 MHz for this;
     // that is why duke_boot.c derives clk_hstx from clk_sys on these boards.
     printf("usb: native host controller (rhport 0)\n");
-    tuh_init(0);
+    // No-argument form (pico_shared's non-PIO branch): it expands to
+    // tusb_rhport_init(0, NULL), which brings up the host stack on
+    // TUH_OPT_RHPORT (0 here) at full speed — identical to the deprecated
+    // tuh_init(0), without the deprecation warning.
+    tusb_init();
 #endif
 
     // Let already-plugged devices enumerate before the game starts polling
