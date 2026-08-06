@@ -11,10 +11,11 @@ the RP2350, with `DUKE3D.GRP` streamed from the SD card.
 
 ### Supported boards
 
-- Adafruit Fruit Jam (`HW_CONFIG 8`) — the hardware-verified board
-- Murmulator M2 (`HW_CONFIG 13`) — builds clean, not yet hardware-tested
-- Pimoroni Pico Plus 2 + Adafruit DVI and MicroSD breakouts (`HW_CONFIG 2`) —
-  builds clean, not yet hardware-tested
+All three are tested and working on real hardware.
+
+- Adafruit Fruit Jam (`HW_CONFIG 8`)
+- Murmulator M2 (`HW_CONFIG 13`)
+- Pimoroni Pico Plus 2 + Adafruit DVI and MicroSD breakouts (`HW_CONFIG 2`)
 
 ### Features
 
@@ -29,13 +30,13 @@ the RP2350, with `DUKE3D.GRP` streamed from the SD card.
   depending on the board, including XInput pads
 - NES/SNES controller ports over PIO on the boards that have them, folded into
   the same scancode stream as USB, so a pad in a DE-9 port behaves like a USB pad
-- Three gamepad layouts, chosen in Options → Game Options → **Gamepad Setup**:
-  the default six-button one, a four-button **NES** layout for a vintage NES
-  controller (SELECT acts as a shift layer), and a **Retro-Go** layout modelled on
-  duke3d-go — fire on A, use on START, strafe on L/R, and the menu on L+R.
-  Retro-Go's **SHIFT MODE** comes with it: hold START for 500 ms and the D-pad
-  becomes the inventory, with look up/down on X and B. Both settings persist in
-  `duke3d.cfg`
+- One gamepad layout for every pad, modelled on **Retro-Go**'s duke3d-go: fire on A,
+  jump on B, crouch on X, jetpack on Y, strafe on L/R, next weapon on SELECT, use on
+  START and the menu on L+R. Holding START for 500 ms turns the D-pad into the
+  inventory, with look up/down on X and B
+- A real NES controller in a DE-9 port is **detected as such** and its two buttons are
+  mapped to A and B, so it fires and jumps like any other pad with no setting to
+  change
 - Saved games and settings on the SD card, next to the GRP
   (`/roms/duke3d/game0.sav` … `game9.sav`, `/roms/duke3d/duke3d.cfg`). Nothing is
   written to flash. Saving needs no keyboard: the pad's A accepts an empty name

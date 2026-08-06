@@ -48,11 +48,10 @@ done
 if [ -n "$notes" ]; then
     {
         echo
-        echo "> **Not every board has been run on hardware.** The Adafruit Fruit Jam is the"
-        echo "> verified one; the others build clean and are believed correct, but are"
-        echo "> untested. Reports welcome."
+        echo "> All boards listed above are tested and working on real hardware. A few have"
+        echo "> hardware requirements worth checking before you flash:"
         echo
-        echo "| Board | Status |"
+        echo "| Board | Requirement |"
         echo "|---|---|"
         printf '%s' "$notes"
     } >> "$OUT"
@@ -97,11 +96,11 @@ fi
     echo
     echo "USB gamepad, USB keyboard, and the NES/SNES ports on the boards that have them --"
     echo "all folded into one scancode stream, so a pad in a DE-9 port behaves exactly like"
-    echo "a USB pad. There are three pad layouts, chosen with **PAD LAYOUT** in *Options →"
-    echo "Game Options → Gamepad Setup*: the default six-button SNES one, a four-button NES"
-    echo "layout where SELECT acts as a shift layer, and a Retro-Go layout with fire on A,"
-    echo "use on START and the menu on L+R -- plus **SHIFT MODE**, where holding START for"
-    echo "500 ms turns the D-pad into the inventory. Saving needs no keyboard -- **A** accepts an empty"
+    echo "a USB pad -- a real NES controller included, which is detected as such so that its"
+    echo "two buttons land on A and B. The pad layout is Retro-Go's: fire on A, jump on B,"
+    echo "crouch on X, next weapon on SELECT, use on START and the menu on L+R, with a shift"
+    echo "layer on a held START that turns the D-pad into the inventory. There is nothing to"
+    echo "configure. Saving needs no keyboard -- **A** accepts an empty"
     echo "save name. The full tables are in"
     echo "[README.md](https://github.com/${GITHUB_REPOSITORY:-fhoedemakers/pico-duke3D}/blob/${TAG}/README.md#controls)."
     echo

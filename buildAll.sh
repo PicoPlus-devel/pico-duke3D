@@ -78,10 +78,16 @@ mkdir releases || exit 1
 # Fruit Jam build tree also holds duke3d.uf2, the M0 hardware bring-up harness
 # that src/pico/CMakeLists.txt only builds for that board.
 # ---------------------------------------------------------------------------
+# Diagnostics are forced OFF here, explicitly. CMake options are STICKY in
+# CMakeCache.txt, so a tree someone once configured with -DDUKE_PAD_DIAG=1 keeps
+# that setting for every later build — including this one. Omitting the flag does
+# not clear it. Without these, a release artifact can silently carry a debug build
+# that spams the console on every button press; that has already happened once.
+DIAG_OFF="-DDUKE_PAD_DIAG=0 -DDUKE_VIDEO_DIAG=0 -DDUKE_HSTX_DEBUG=0"
 for TAG in $RELEASE_BOARDS; do
     echo ""
     echo "=================== $TAG ==================="
-    ./${TAG}-build.sh || exit 1
+    CMAKE_ARGS="${CMAKE_ARGS} ${DIAG_OFF}" ./${TAG}-build.sh || exit 1
     cp "build_${TAG}/src/pico/duke3d_game.uf2" "releases/duke3d_game_${TAG}.uf2" || exit 1
 done
 

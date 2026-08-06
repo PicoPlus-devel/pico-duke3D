@@ -264,6 +264,21 @@ if (DUKE_VIDEO_DIAG)
     target_compile_definitions(duke3d_game PRIVATE DUKE_VIDEO_DIAG=1)
 endif()
 
+# Gamepad diagnostics, off by default. -DDUKE_PAD_DIAG=1 logs the internal button
+# word on every change, per source (usb/nespad/wii) and decoded to names. This
+# exists because pads do NOT agree on which io bit a face button reports — several
+# land their A on io Y rather than io A — so "button X does the wrong thing" is only
+# answerable by pressing one button at a time and reading what actually arrives.
+# Do that BEFORE editing any mapping table.
+# Core0, and change-triggered, so it cannot disturb the audio pump.
+#
+# NOTE: like every option here, this one is STICKY in CMakeCache.txt. Re-running
+# the build script without it does NOT turn it off — pass -DDUKE_PAD_DIAG=0 (or
+# delete the build tree) or you will keep shipping the diagnostic.
+if (DUKE_PAD_DIAG)
+    target_compile_definitions(duke3d_game PRIVATE DUKE_PAD_DIAG=1)
+endif()
+
 # pico_hdmi's own 1 Hz core1 dump is now a SEPARATE, deliberately awkward opt-in,
 # because it CORRUPTS THE THING WE USE IT TO MEASURE. It runs on core1, in the
 # same loop that pumps audio, and costs ~33 ms of wall time per burst: three

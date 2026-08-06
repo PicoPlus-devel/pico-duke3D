@@ -43,11 +43,11 @@ board_needs_pio_usb() {
 }
 
 # Caveat for the release notes, empty when there is none. Keep in step with the
-# "Status" section of README.md: only the Fruit Jam has been run on hardware.
+# "Which board" table in README.md and "Status" in TECHNICAL.md: all three boards are
+# now hardware-verified, so only genuine hardware requirements are left here.
 board_note() {
     case "$1" in
-        murmulatorm2)  echo "builds clean, not yet hardware-tested" ;;
-        adafruitdvisd) echo "needs a Pimoroni Pico Plus 2; not yet hardware-tested" ;;
+        adafruitdvisd) echo "needs a Pimoroni Pico Plus 2" ;;
         *)             echo "" ;;
     esac
 }
