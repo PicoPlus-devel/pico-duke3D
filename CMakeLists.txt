@@ -122,6 +122,42 @@ if (NOT CMAKE_CXX_FLAGS MATCHES "${DUKE_BOARD}_cflags.h")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -include ${DUKE_BOARD_CFLAGS} -g3 -ggdb")
 endif()
 
+# --- gcc 14: keep the C dialect the 1996 sources were written for ------------
+# gcc 14 PROMOTED a group of C diagnostics from warnings to errors by DEFAULT.
+# This is not -Werror (nothing here sets it) and -w does not help: a
+# default-error is not a warning, so cmake/duke_engine.cmake's -w silences
+# nothing. The BUILD engine trips two of them on nearly every rasteriser call —
+# it parks byte pointers in int32_t/intptr_t and hands them back untyped
+# (bufplce[], palookupoffse[], ylookup[]) — which is well-defined on this 32-bit
+# target and is the same legacy-C bargain -w / -fcommon / -fno-strict-aliasing
+# already accept. Downgrading them to warnings (which -w then swallows) is the
+# whole fix; the code generated is identical.
+#
+# Why it only shows up in CI: the self-hosted runner has arm-none-eabi-gcc 14,
+# local/dev boxes here have 13, so the tree builds clean locally and fails there
+# with ~130 errors in engine.c alone. Applied at directory scope, before
+# pico_sdk_init(), so every C target inherits it — the engine is merely the
+# loudest offender, not necessarily the only one. C only: these are C-family
+# options and g++ warns on each one it is handed.
+set(DUKE_LEGACY_C_DIALECT
+    -Wno-error=int-conversion
+    -Wno-error=incompatible-pointer-types
+    -Wno-error=implicit-function-declaration
+    -Wno-error=implicit-int
+)
+if (CMAKE_C_COMPILER_ID STREQUAL "GNU" AND CMAKE_C_COMPILER_VERSION VERSION_GREATER_EQUAL 14)
+    # These two warning names did not exist before gcc 14, and an unknown
+    # -Wno-error= argument is itself a hard error ("no option -Wreturn-mismatch"),
+    # so they cannot be passed unconditionally.
+    list(APPEND DUKE_LEGACY_C_DIALECT
+        -Wno-error=return-mismatch
+        -Wno-error=declaration-missing-parameter-type
+    )
+endif()
+foreach(_flag IN LISTS DUKE_LEGACY_C_DIALECT)
+    add_compile_options("$<$<COMPILE_LANGUAGE:C>:${_flag}>")
+endforeach()
+
 pico_sdk_init()
 
 if (PICO_ON_DEVICE AND NOT CMAKE_BUILD_TYPE STREQUAL "MinSizeRel")
