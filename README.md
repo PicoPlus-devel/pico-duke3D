@@ -337,4 +337,12 @@ Two things to check on the board itself:
 Design, build instructions, the differences between the boards at pin level, and notes
 for anyone changing the code: [TECHNICAL.md](TECHNICAL.md).
 
+## Credits
+
+- Ported by Frank Hoedemakers, with most of the code written by
+  [Claude Code](https://claude.com/claude-code)
+- Testing by Gavin Knight ([DynaMight1124](https://github.com/DynaMight1124))
+- Built on [Chocolate Duke3D](https://github.com/fabiensanglard/chocolate_duke3D) and
+  Ken Silverman's BUILD engine
+
 Duke Nukem 3D is © 3D Realms. No game data is included with this port.
