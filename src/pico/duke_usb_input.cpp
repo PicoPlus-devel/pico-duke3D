@@ -463,6 +463,24 @@ namespace
         }
         not_ready_since = 0;
         nespad_read_finish();
+#if DUKE_PAD_DIAG
+        // Driver-level truth, before any translation: the raw 12-bit serial word
+        // per port and the NES/SNES verdict for each. An EMPTY port must read
+        // 0000 with nes=0 (its DATA pin is pulled up, so a disconnected socket
+        // inverts to all zeros). Anything else there is phantom input being OR-ed
+        // into the merged button word, which can mask the real pad's presses.
+        {
+            static uint16_t p0 = 0xffff, p1 = 0xffff;
+            if (nespad_states_ext[0] != p0 || nespad_states_ext[1] != p1)
+            {
+                p0 = nespad_states_ext[0];
+                p1 = nespad_states_ext[1];
+                printf("nespad: port0=%04x nes=%d  port1=%04x nes=%d\n",
+                       p0, nespad_is_nes[0] ? 1 : 0,
+                       p1, nespad_is_nes[1] ? 1 : 0);
+            }
+        }
+#endif
         // Translated per port BEFORE the merge, because the two ports can hold
         // different pad shapes and nespad_is_nes[] is per port. Merging the raw
         // words first would lose that.
