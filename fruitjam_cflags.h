@@ -15,6 +15,15 @@
 // omitted for the M0 bring-up; add them when the SRAM map gets tight.
 //
 
+// The cheap AliExpress MantaPad (VID 081f) can act as a NES or a SNES pad, and
+// pico_shared defaults it to NES mode until the player presses Y. NES mode
+// reports only two face buttons, and since its "NES B" IS the physical SNES X,
+// the pad's X arrives as logical A and its A arrives as logical B -- which is
+// bound to Escape, so pressing what looks like fire opened the menu. Duke needs
+// all four face buttons regardless, so default to SNES mode. See
+// 3rdparty/pico_shared_drivers/usb_hid/hid_app.cpp and README.md.
+#define MANTAPAD_DEFAULT_SNES_MODE 1
+
 // pico_shared BoardConfigs identity of this board (consumed by nespad.cpp in
 // later milestones to pick its PIO program variant).
 #define HW_CONFIG 8
@@ -57,6 +66,9 @@
 #define PICO_AUDIO_I2S_INTERRUPT_PIN 23
 #define PICO_AUDIO_I2S_INTERRUPT_IS_BUTTON 0
 // I2C bus for the TLV320DAC3100 codec (macros consumed by tlv320dac3100.c).
+// The very same bus and pins are the Wii extension port on the STEMMA QT
+// connector, read by src/pico/duke_wiipad.cpp — which is why the pad has to be
+// brought up before the codec, see duke_wiipad_init(). -1 would disable it.
 #define WIIPAD_I2C i2c0
 #define WII_PIN_SDA 20
 #define WII_PIN_SCL 21
@@ -84,6 +96,16 @@
 
 // --- PSRAM (8 MB APS6404 on QMI CS1 = GPIO 47) ------------------------------
 #define PSRAM_CS_PIN 47
+
+// --- Status LEDs (src/pico/duke_leds.c) -------------------------------------
+// -1 means the board does not have it, the same convention as the Wii pins
+// above. Plain onboard LED, blinked every 60 game frames. = PICO_DEFAULT_LED_PIN.
+#define DUKE_LED_PIN 29
+// The 5 onboard NeoPixels, driven as an audio VU meter (ported from
+// pico-infonesPlus' vumeter.cpp, which this board also runs).
+// = PICO_DEFAULT_WS2812_PIN. Being above GPIO 31 this needs a PIO whose GPIO
+// base can be moved to 16, which only the otherwise-unused pio2 can offer.
+#define DUKE_VU_WS2812_PIN 32
 
 // --- USB host on Pico-PIO-USB -----------------------------------------------
 // Marker only in M0: selects the "retask PLL_USB as the fixed 126 MHz clk_hstx

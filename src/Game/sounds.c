@@ -606,12 +606,32 @@ void TestCallBack(int32_t num)
 {
     short tempi,tempj,tempk;
 
+#ifdef PLATFORM_PICO
+        // Bare-metal port: this runs from the audio mixer's completion path,
+        // so it can fire while a level is being torn down / rebuilt. The
+        // sprite indices it looks up (SoundOwner[][].i) are captured when the
+        // sound STARTS and go stale across a level change, and the original
+        // 1996 code trusts them blindly — a stale index makes
+        // `hittype[tempi].temp_data[0] = 0` below an out-of-bounds write that
+        // scribbles over neighbouring PSRAM (which is where the GRP index and
+        // the tile tables live: the symptom was 'tiles000.art' suddenly
+        // failing to open mid-game). Validate every index before use.
+        if (num >= NUM_SOUNDS) return;
+        if (num < 0)
+        {
+            int32_t lump = -num;
+            if (lump < (int32_t)sizeof(lumplockbyte) && lumplockbyte[lump] >= 200)
+                lumplockbyte[lump]--;
+            return;
+        }
+#else
         if(num < 0)
         {
             if(lumplockbyte[-num] >= 200)
                 lumplockbyte[-num]--;
             return;
         }
+#endif
 
         tempk = Sound[num].num;
 
@@ -621,6 +641,14 @@ void TestCallBack(int32_t num)
                 for(tempj=0;tempj<tempk;tempj++)
             {
                 tempi = SoundOwner[num][tempj].i;
+#ifdef PLATFORM_PICO
+                // Stale/garbage owner index (see the note at the top): skip it
+                // rather than indexing sprite[]/sector[]/hittype[] out of range.
+                if (tempi < 0 || tempi >= MAXSPRITES)
+                    continue;
+                if (sprite[tempi].sectnum < 0 || sprite[tempi].sectnum >= MAXSECTORS)
+                    continue;
+#endif
                 if(sprite[tempi].picnum == MUSICANDSFX && sector[sprite[tempi].sectnum].lotag < 3 && sprite[tempi].lotag < 999)
                 {
                     hittype[tempi].temp_data[0] = 0;

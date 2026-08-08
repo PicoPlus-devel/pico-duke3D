@@ -73,6 +73,7 @@ uint8_t nespad_states[2] = {0, 0};
 // A plain NES controller only populates bits 0-7 (A,B,Select,Start,dpad) —
 // for those pads this is identical to nespad_states[].
 uint16_t nespad_states_ext[2] = {0, 0};
+bool nespad_is_nes[2] = {false, false};
 uint8_t nespad_state = 0;
 bool nespad_begin(uint8_t padnum, uint32_t cpu_khz, uint8_t clkPin, uint8_t dataPin,
                   uint8_t latPin, PIO _pio)
@@ -155,7 +156,10 @@ void nespad_read_start(void)
 static uint16_t nespad_decode(int padnum)
 {
   if (sm[padnum] < 0)
+  {
+    nespad_is_nes[padnum] = false;
     return 0;
+  }
   // Right-shift was used in sm config so bit order matches NES controller
   // bits used elsewhere in picones, but does require shifting down...
   uint32_t raw = (pio_sm_get_blocking(pio[padnum], sm[padnum]) >> 16) ^ 0xFFFF;
@@ -163,7 +167,13 @@ static uint16_t nespad_decode(int padnum)
   // read low on the wire = 1 after inversion. A SNES controller drives the
   // 4 ID bits (13-16) high = 0 after inversion, so they can never all be
   // set. Disconnected port reads high via pull-up = all zeros.
-  if ((raw & 0xF000) == 0xF000)
+  // fruitjam-doom local addition: publish that verdict instead of discarding it.
+  // Callers cannot recover it afterwards -- the ID bits are gone from the return
+  // value -- and a NES pad's two buttons sit in the SNES *serial* positions B and
+  // Y, so without this a caller has to translate them as if they were a SNES
+  // pad's B and Y. See nesToButtons() in duke_usb_input.cpp.
+  nespad_is_nes[padnum] = ((raw & 0xF000) == 0xF000);
+  if (nespad_is_nes[padnum])
     raw &= 0x00FF; // NES pad: keep the 8 real buttons
   return (uint16_t)(raw & 0x0FFF); // SNES pad: strip the ID bits
 }

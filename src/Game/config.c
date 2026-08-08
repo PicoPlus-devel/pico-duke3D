@@ -68,6 +68,7 @@ int32 ControllerType;
 int32 MouseAiming = 0;
 int32_t BFullScreen = 0;
 
+
 //
 // Screen variables
 //
@@ -672,7 +673,13 @@ void CONFIG_ReadSetup( void )
 	if(ud.auto_aim!=1 && ud.auto_aim != 2)
 		ud.auto_aim = 2; // avoid people missing with the cfg to go in a deadlock
    SCRIPT_GetNumber( scripthandle, "Misc", "GitDatMdk",&ud.gitdat_mdk);
-   
+   // The pad has no button to spare for Run -- L and R are strafe -- so it leans
+   // on Duke's own AutoRun. Forced unconditionally, or turning AutoRun off
+   // (CapsLock) once would leave the pad walking forever after. This overrides the
+   // RunMode read above; the key is still written back from ud.auto_run so the
+   // pair stays symmetrical.
+   ud.auto_run = 1;
+
    if(ud.mywchoice[0] == 0 && ud.mywchoice[1] == 0)
    {
        ud.mywchoice[0] = 3;

@@ -16,7 +16,14 @@
 
 
 //#define STUBBED(x)
-#ifdef __SUNPRO_C
+#if defined(PLATFORM_PICO)
+// The startup sequence is mirrored to a 40-column screen (see
+// src/pico/duke_dostext.cpp), and the stock form below is about 118 characters
+// -- it prints the function name twice and then an absolute __FILE__ path, so a
+// single stub notice ate three of the 24 text rows. The name on its own
+// identifies the stub, and it fits one row.
+#define STUBBED(x) printf("STUB: %s\n", x)
+#elif defined(__SUNPRO_C)
 #define STUBBED(x) fprintf(stderr,"STUB: %s (??? %s:%d)\n",x,__FILE__,__LINE__)
 #else
 #define STUBBED(x) fprintf(stderr,"STUB: %s (%s, %s:%d)\n",x,__FUNCTION__,__FILE__,__LINE__)

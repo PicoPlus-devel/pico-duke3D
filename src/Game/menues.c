@@ -188,7 +188,11 @@ int loadpheader(uint8_t  spot,int32 *vn,int32 *ln,int32 *psk,int32 *nump)
 
          fn[4] = spot+'0';
 
-     if ((fil = TCkopen4load(fn,0)) == -1) return(-1);
+     if ((fil = TCkopen4load(fn,0)) == -1)
+     {
+         printf("load: slot %d '%s' -- no savegame\n", spot, fn);
+         return(-1);
+     }
 
      tiles[MAXTILES-3].lock = 255;
 
@@ -217,12 +221,41 @@ int loadpheader(uint8_t  spot,int32 *vn,int32 *ln,int32 *psk,int32 *nump)
 }
 
 
+#ifdef PLATFORM_PICO
+// 20 KB (MAXSCRIPTSIZE) will not fit on the stack here: core0's stack is the
+// 4 KB SCRATCH_Y bank (8 KB counting SCRATCH_X), so as a local this overflowed
+// straight through __StackLimit into the heap on every save/load. Static
+// instead -- menues.c is part of libduke, so this lands in PSRAM (see
+// cmake/psram_linker.cmake), which is free and plenty fast for a buffer only
+// touched while writing or reading a savegame. Save and load never run
+// concurrently (both are driven from the menu on core0), but they keep separate
+// buffers anyway since it costs nothing there.
+#define DUKE_SCRIPTPTRS_STATIC static
+#else
+#define DUKE_SCRIPTPTRS_STATIC
+#endif
+
+#ifdef PLATFORM_PICO
+// Queried by the pad layer (src/pico/duke_usb_input.cpp). The same button has
+// to send Left Ctrl (fire) in game and Enter
+// (confirm) in a menu, so it needs to know which is up. Not the in_menu global:
+// that one is only refreshed inside playback() (game.c), i.e. on the title/demo
+// loop, so it is stale for the whole of a level. MODE_TYPE is folded in so that
+// typing a message counts as "in a menu" too -- otherwise the pad would fire
+// while the player types.
+int duke_menu_is_active(void)
+{
+    return (ps[myconnectindex].gm & (MODE_MENU|MODE_TYPE)) != 0;
+}
+#endif
+
 int loadplayer(int8_t spot)
 {
      short k,music_changed;
      char  fn[] = "game0.sav";
      char  mpfn[] = "gameA_00.sav";
-     char  *fnptr, scriptptrs[MAXSCRIPTSIZE];
+     char  *fnptr;
+     DUKE_SCRIPTPTRS_STATIC char scriptptrs[MAXSCRIPTSIZE];
      int32_t fil, bv, i, j, x;
      int32 nump;
 
@@ -252,7 +285,12 @@ int loadplayer(int8_t spot)
         fn[4] = spot + '0';
      }
 
-     if ((fil = TCkopen4load(fnptr,0)) == -1) return(-1);
+     if ((fil = TCkopen4load(fnptr,0)) == -1)
+     {
+         printf("load: slot %d '%s' -- open FAILED\n", spot, fnptr);
+         return(-1);
+     }
+     printf("load: slot %d from '%s'\n", spot, fnptr);
 
 	 if(ud.recstat != 2)
 		ready2send = 0;
@@ -437,6 +475,10 @@ int loadplayer(int8_t spot)
 
      kclose(fil);
 
+     printf("load: slot %d done -- E%dL%d skill %d, name \"%s\"\n",
+            spot, ud.volume_number + 1, ud.level_number + 1,
+            ud.player_skill, &ud.savegame[spot][0]);
+
      if(ps[myconnectindex].over_shoulder_on != 0)
      {
          cameradist = 0;
@@ -553,7 +595,8 @@ int saveplayer(int8_t spot)
      int32_t i, j;
      char  fn[] = "game0.sav";
      char  mpfn[] = "gameA_00.sav";
-     char  *fnptr,scriptptrs[MAXSCRIPTSIZE];
+     char  *fnptr;
+     DUKE_SCRIPTPTRS_STATIC char scriptptrs[MAXSCRIPTSIZE];
          FILE *fil;
      int32_t bv = BYTEVERSION;
 	 char  fullpathsavefilename[16];
@@ -599,7 +642,13 @@ int saveplayer(int8_t spot)
 		sprintf(fullpathsavefilename, "%s", fnptr);
 	}
 
-     if ((fil = fopen(fullpathsavefilename,"wb")) == 0) return(-1);
+     if ((fil = fopen(fullpathsavefilename,"wb")) == 0)
+     {
+         printf("save: slot %d '%s' -- open FAILED\n", spot, fullpathsavefilename);
+         return(-1);
+     }
+     printf("save: slot %d to '%s' (name \"%s\")\n",
+            spot, fullpathsavefilename, &ud.savegame[spot][0]);
 
      ready2send = 0;
 
@@ -759,6 +808,16 @@ int saveplayer(int8_t spot)
      dfwrite(&parallaxyscale,sizeof(parallaxyscale),1,fil);
 
          fclose(fil);
+
+     {
+         /* Reopen to report the size actually on disk -- a save that "worked"
+          * but wrote 0 bytes is the interesting failure, and dfwrite() has no
+          * return value to check. */
+         FILE *chk = fopen(fullpathsavefilename, "rb");
+         long  sz  = -1;
+         if (chk) { fseek(chk, 0, SEEK_END); sz = ftell(chk); fclose(chk); }
+         printf("save: slot %d done, %ld bytes\n", spot, sz);
+     }
 
      if(ud.multimode < 2)
      {
@@ -1208,6 +1267,7 @@ void bar(int x,int y,short *p,short dainc,uint8_t  damodify,short s, short pa)
 
 int32 volnum,levnum,plrskl,numplr;
 short lastsavedpos = -1;
+
 
 void dispnames(void)
 {
@@ -2751,7 +2811,7 @@ else
 
             onbar = 0;
 
-			x = probe(c+6,43,16,7);
+            x = probe(c+6,43,16,7);
 
             switch(x)
             {
@@ -3252,6 +3312,7 @@ else
 			menutext(c+160+40,43+16*5,0,0,(ud.tickrate&1)?"ON":"OFF");
 
 			break;
+
 
         case 350:
             cmenu(351);

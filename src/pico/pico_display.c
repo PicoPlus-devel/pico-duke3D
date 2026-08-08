@@ -19,12 +19,15 @@
 #include "hardware/clocks.h"
 
 #include "video_output.h"          // pico_hdmi
+#include "duke_dostext.h"
+#include "duke_leds.h"
 #include "hstx_data_island_queue.h"
 
 // BUILD engine headers (declarations + functions we drive).
 #include "build.h"
 #include "engine.h"
 #include "display.h"
+#include "draw.h"                  // setBytesPerLine (rasteriser stride)
 
 // ---------------------------------------------------------------------------
 // Engine framebuffer globals (were defined in display.c).
@@ -47,10 +50,15 @@ extern int32_t *horizlookup, *horizlookup2;
 static uint8_t  s_fb8[FB_W * FB_H];       // 8bpp — frameplace points here
 static uint16_t s_rgb[FB_W * FB_H];       // RGB555 — scanned out by core1
 static uint16_t s_pal555[256];            // palette lookup (RGB555)
+static uint8_t  s_pal_bgr888[256 * 3];    // same palette, 8-bit BGR (screenshots)
 
-static volatile uint32_t s_frame_counter = 0;
+static volatile uint32_t s_frame_counter = 0;   // HSTX scanout frames (core1)
+static uint32_t s_page_count = 0;               // _nextpage calls = GAME frames
+static uint32_t s_idle_count = 0;               // duke_pico_idle calls (hot hook)
 static uint32_t s_core1_stack[2048] __attribute__((aligned(8)));
 static bool s_video_up = false;
+static volatile bool s_pal_dirty = false;   // palette changed since the last expand
+static uint32_t s_last_page_us = 0;         // when _nextpage last ran
 
 // core1 (DMA IRQ): fill 320 words (two RGB555 px each) from the RGB555 frame,
 // vertical nearest-neighbour 480->200, horizontal 2x doubling. Kept minimal.
@@ -68,6 +76,17 @@ static void __not_in_flash_func(duke_scanline_cb)(uint32_t v_scanline,
     }
 }
 
+// 8bpp -> RGB555 through the current palette. Called from _nextpage() every
+// frame, and from duke_pico_idle() when the palette changed but the game has
+// stopped flipping (see the comment there).
+static void expand_frame(void)
+{
+    const uint8_t *src = s_fb8;
+    uint16_t *dst = s_rgb;
+    for (int i = 0; i < FB_W * FB_H; i++) dst[i] = s_pal555[src[i]];
+    s_pal_dirty = false;
+}
+
 static void __not_in_flash_func(duke_vsync_cb)(void)
 {
     s_frame_counter++;
@@ -76,9 +95,22 @@ static void __not_in_flash_func(duke_vsync_cb)(void)
 // ---------------------------------------------------------------------------
 // Platform init / video mode
 // ---------------------------------------------------------------------------
-void _platform_init(int argc, char **argv, const char *title, const char *iconName)
+// HSTX bring-up, split out of _platform_init and made idempotent.
+//
+// Two callers need it before Duke does. duke_boot's main() calls it right after
+// duke_psram_init() so the DOS console is on screen for the whole rest of the
+// boot -- without that, a failure in the PSRAM/SD/GRP stage printed to a UART
+// nobody has connected and left the HDMI output black (see duke_fatal.c). And
+// duke_fatal() itself calls it, so a fatal that somehow fires earlier still gets
+// a screen.
+//
+// Idempotence is not just for those: menues.c's "Toggle fullscreen" item calls
+// _platform_init() a SECOND time, which used to re-claim the ping/pong DMA
+// channels and re-launch core1 -- both hard panics.
+void duke_video_ensure_up(void)
 {
-    (void)argc; (void)argv; (void)title; (void)iconName;
+    if (s_video_up) return;
+
     // clk_hstx is configured to a fixed 126 MHz in duke_boot before we get here.
     assert(clock_get_hz(clk_hstx) == 126000000u);
     memset(s_pal555, 0, sizeof(s_pal555));
@@ -105,9 +137,41 @@ void _platform_init(int argc, char **argv, const char *title, const char *iconNa
     printf("pico_display: HSTX 640x480 up (clk_hstx=%lu)\n",
            (unsigned long)clock_get_hz(clk_hstx));
 
+    // Put Duke's DOS startup sequence on screen. Everything printed before this
+    // point -- the banner, the clock report, the PSRAM lines -- is held in the
+    // console's character grid and replayed here, so nothing is lost. From here
+    // on every "Using: 'DUKE3D.GRP'" / "Compiling: 'GAME.CON'" line is mirrored
+    // to the display as well as the UART. It renders into the RGB555 scanout
+    // surface directly, because no palette is loaded yet.
+    duke_dostext_init(s_rgb, FB_W);
+}
+
+// Hand the RGB555 scanout surface back to the DOS console (duke_fatal). Lives
+// here because s_rgb is private to this file.
+void duke_display_console_resume(void)
+{
+    if (!s_video_up) return;
+    duke_dostext_resume(s_rgb, FB_W);
+}
+
+void _platform_init(int argc, char **argv, const char *title, const char *iconName)
+{
+    (void)argc; (void)argv; (void)title; (void)iconName;
+    // Normally already up: duke_boot's main() brings the display up before the
+    // SD card so boot failures are visible. Kept here so the engine still owns
+    // the ordering if that ever moves back.
+    duke_video_ensure_up();
+
     // USB host after video (fruitjam-doom order): gamepad + keyboard input.
-    extern void duke_usb_init(void);
-    duke_usb_init();
+    // Once only, for the same reason duke_video_ensure_up() is idempotent: the
+    // video menu's "Toggle fullscreen" re-enters here, and a second tuh_init()
+    // would re-initialise a running host stack.
+    static bool usb_up = false;
+    if (!usb_up) {
+        extern void duke_usb_init(void);
+        duke_usb_init();
+        usb_up = true;
+    }
 }
 
 void _uninitengine(void) { }
@@ -184,9 +248,29 @@ int VBE_setPalette(uint8_t *palettebuffer)
         uint32_t r = *p++;
         p++;                               // reserved
         s_pal555[i] = (uint16_t)(((r >> 1) << 10) | ((g >> 1) << 5) | (b >> 1));
+        // Same entry as 8-bit BGR, for screencapture(). 0..63 -> 0..255 is the
+        // scaling display.c uses for its own dumps (v / 63.0 * 255), and BGR
+        // rather than RGB because that is the order PNGenc's PLTE writer reads
+        // its palette in (3rdparty/PNGenc/png.inl: [i*3+2] is red).
+        s_pal_bgr888[i * 3 + 0] = (uint8_t)((b * 255u) / 63u);
+        s_pal_bgr888[i * 3 + 1] = (uint8_t)((g * 255u) / 63u);
+        s_pal_bgr888[i * 3 + 2] = (uint8_t)((r * 255u) / 63u);
     }
+    s_pal_dirty = true;
     return 0;
 }
+
+// The live palette in 8-bit BGR, for duke_screenshot.cpp.
+//
+// Built here, next to s_pal555, so a screenshot always matches what is on the
+// HDMI output -- including brightness (setbrightness() feeds this through
+// britable[]) and every in-game tint: pain red, underwater blue, night vision.
+//
+// NOT lastPalette above: that memcpy copies the first 768 bytes of a 1024-byte
+// 4-byte-stride BGR0 array, so it is skewed after the first setbrightness().
+// Deriving this from s_pal555 would also work but would throw away 3 bits per
+// channel; 768 bytes buys the exact values.
+const uint8_t *duke_display_palette_bgr888(void) { return s_pal_bgr888; }
 
 int VBE_getPalette(int32_t start, int32_t num, uint8_t *palettebuffer)
 {
@@ -213,6 +297,7 @@ void pico_display_post_key(uint8_t rawcode)
 extern void duke_usb_poll(void);
 extern void duke_audio_poll_headphone(void);
 extern void duke_audio_pump(void);
+void duke_pico_idle(void);         // defined below; also called from the engine
 
 void _handle_events(void)
 {
@@ -228,20 +313,134 @@ void _idle(void) { }
 // are fine.
 void duke_pico_idle(void)
 {
-    duke_usb_poll();
-    duke_audio_poll_headphone();   // I2C traffic — frame context only
+    // HOT PATH: the engine calls faketimerhandler (and therefore this) from
+    // inside its render inner loops — thousands of times per frame. Everything
+    // here must be a few instructions in the common case. In particular use
+    // time_us_32() (one register read) and NEVER to_ms_since_boot(), which is a
+    // 64-bit read plus a 64-bit divide and cost us most of the frame rate.
+    const uint32_t now_us = time_us_32();
+    s_idle_count++;
+
+    // Cheap: a queue-level check that returns unless core1 has fallen behind.
     duke_audio_pump();
+
+    // Cheap: two volatile reads unless a sound actually finished. Must run at
+    // this frequency — Duke spin-waits on sound completion inside
+    // faketimerhandler (premap.c's level-start speech wait), and those loops
+    // only exit once a queued callback lands.
+    {
+        extern void duke_audio_run_deferred_callbacks(void);
+        duke_audio_run_deferred_callbacks();
+    }
+
+    // Duke assumes DOS VGA semantics, where writing the palette changes what is
+    // on screen immediately. Here the palette is baked into the RGB555 surface
+    // by _nextpage(), so a palette change with no following page flip is
+    // invisible. showtwoscreens() depends on exactly that: it fades to black,
+    // draws the order screen, flips (with the palette still black), fades back
+    // IN without flipping again, and then blocks in
+    // "while(!KB_KeyWaiting())". The screen stayed black and quitting looked
+    // like a hang.
+    //
+    // So re-expand here when the palette has moved and the game plainly is not
+    // flipping pages any more. The 50 ms gate is what keeps this free: during
+    // normal play _nextpage() runs every frame and clears the flag itself, so
+    // this never fires on the hot path -- only when something is blocking.
+    if (s_pal_dirty && s_video_up && (now_us - s_last_page_us) > 50000u) {
+        expand_frame();
+    }
+
+    // USB host + headphone detect are expensive (tuh_task, codec I2C) and do
+    // not need inner-loop rates.
+    {
+        static uint32_t last_io_us;
+        if (now_us - last_io_us >= 2000u) {
+            last_io_us = now_us;
+            duke_usb_poll();
+            duke_audio_poll_headphone();
+        }
+    }
+
+    // 1 Hz audio health report. Diagnostic-build only: in the shipping build the
+    // whole block (and the per-stage timers behind it, see duke_audio.c) compiles
+    // out, so the audio path carries no measurement cost.
+    //
+    //   clip=N     music+SFX sum saturated -> lower DUKE_MUSIC_GAIN_SHIFT.
+    //   starve=N   pump found the sink near-empty.
+    //   dv vs need production rate against what 48 kHz demands. THE number: if
+    //              dv < need the sink drains and, because the MIDI clock and
+    //              voice playback advance with rendered samples, music and
+    //              speech play slow by exactly that ratio.
+    //   bg         core1 pump entries/s. Hundreds of thousands = healthy (it is
+    //              early-outing on a satisfied target). Single digits = each
+    //              call is grinding through its full division guard, which is
+    //              what a production shortfall looks like from the outside.
+    //   di/du      HDMI island queue level (target 512) and underrun count.
+    //              du must stay frozen.
+    // Healthy in-level reference, E1L1 with music (RP2350 @ 378 MHz):
+    //   dv=188 need=187 di~500 du frozen; stage lock=0 svc=27 music=555 push=143.
+#if DUKE_VIDEO_DIAG
+    {
+        extern uint32_t duke_music_take_clip_count(void);
+        extern uint32_t duke_audio_take_starve_count(void);
+        static uint32_t last_report_us;
+        if (now_us - last_report_us >= 1000000u) {
+            last_report_us = now_us;
+            uint32_t clips = duke_music_take_clip_count();
+            uint32_t starve = duke_audio_take_starve_count();
+            // bg/dv/need: see duke_audio_take_rate_stats. dv is the production
+            // rate and "need" is what 48 kHz demands — if dv < need the sink
+            // drains and no amount of ring depth can hide it. bg says whether
+            // core1's tight loop is actually spinning (thousands) or wedged in
+            // long pump calls (tens).
+            extern void duke_audio_take_rate_stats(uint32_t *, uint32_t *, uint32_t *);
+            extern void duke_audio_take_stage_us(uint32_t *, uint32_t *, uint32_t *, uint32_t *);
+            uint32_t bg, dv, fpd, u_lock, u_svc, u_music, u_push;
+            duke_audio_take_rate_stats(&bg, &dv, &fpd);
+            duke_audio_take_stage_us(&u_lock, &u_svc, &u_music, &u_push);
+            printf("audio: clip=%lu starve=%lu bg=%lu/s dv=%lu/s need=%lu/s di=%lu du=%lu\n",
+                   (unsigned long)clips, (unsigned long)starve,
+                   (unsigned long)bg, (unsigned long)dv,
+                   (unsigned long)(fpd ? 48000u / fpd : 0),
+                   (unsigned long)hstx_di_queue_get_level(),
+                   (unsigned long)hstx_di_queue_get_underrun_count());
+            // ms of core1 wall time per second in each pump stage. These four
+            // should sum to well under 1000; whichever dominates is the cause of
+            // the in-level production shortfall.
+            printf("  stage ms/s: lock=%lu svc=%lu music=%lu push=%lu (of 1000)\n",
+                   (unsigned long)(u_lock / 1000), (unsigned long)(u_svc / 1000),
+                   (unsigned long)(u_music / 1000), (unsigned long)(u_push / 1000));
+        }
+    }
+#endif
 }
 
 void _nextpage(void)
 {
+    s_page_count++;   // game-frame counter (see the diag report below)
+
+    // _handle_events -> duke_pico_idle also drains the deferred sound
+    // callbacks, so there is no separate dispatch needed here.
     _handle_events();
+
+    // Onboard LED heartbeat plus the VU meter repaint on boards with a strip.
+    // Once per game frame, and deliberately NOT in duke_pico_idle(): that hook
+    // fires thousands of times per frame from the engine's render inner loops.
+    // Ahead of the s_video_up bail-out below so the heartbeat still runs if the
+    // display never came up — on a UART-less board it is the only sign of life.
+    duke_leds_frame(s_page_count);
+
     if (!s_video_up) return;
 
+    // Retire the startup console only here, where a real game frame is about to
+    // be drawn -- NOT at the top of this function. The engine calls _nextpage()
+    // through _updateScreenRect() during startup, long before it draws anything,
+    // and stopping on those calls killed the console before any text appeared.
+    if (duke_dostext_active()) duke_dostext_stop();
+
     // Palette-expand the 8bpp frame into the RGB555 scanout buffer (core0).
-    const uint8_t *src = s_fb8;
-    uint16_t *dst = s_rgb;
-    for (int i = 0; i < FB_W * FB_H; i++) dst[i] = s_pal555[src[i]];
+    expand_frame();
+    s_last_page_us = time_us_32();
 
     // Pace to one HSTX frame so we cap near 60 Hz — but never hang if core1
     // stops advancing (that's exactly the failure we're diagnosing).
@@ -253,18 +452,26 @@ void _nextpage(void)
     // 1 Hz core0-side status (enable with -DDUKE_VIDEO_DIAG=1). If core1
     // dies, "vf" freezes while this keeps printing; if the watchdog is
     // resync-looping, "rs" climbs. "du" = DI underrun (audio pump starved).
-    static uint32_t s_last_report, s_last_vf;
+    static uint32_t s_last_report, s_last_vf, s_last_pages, s_last_idle;
     uint32_t now = to_ms_since_boot(get_absolute_time());
     if (now - s_last_report >= 1000) {
         extern uint32_t hstx_di_queue_get_underrun_count(void);
         extern uint32_t hstx_di_queue_get_level(void);
         extern int get_video_output_resync_count(void);
-        printf("vid: vf=%lu (+%lu/s) rs=%d di=%lu du=%lu\n",
-               (unsigned long)s_frame_counter,
+        // gf = GAME frames/s (_nextpage calls) — the number that matters.
+        // vf = HSTX scanout frames/s, which is always ~60 and says nothing
+        // about how fast the game itself is running.
+        // ic = idle-hook calls/s. This hook runs from the engine's render
+        // inner loops, so its per-call cost is multiplied by this number.
+        printf("vid: gf=%lu/s ic=%lu/s vf=+%lu/s rs=%d di=%lu du=%lu\n",
+               (unsigned long)(s_page_count - s_last_pages),
+               (unsigned long)(s_idle_count - s_last_idle),
                (unsigned long)(s_frame_counter - s_last_vf),
                get_video_output_resync_count(),
                (unsigned long)hstx_di_queue_get_level(),
                (unsigned long)hstx_di_queue_get_underrun_count());
+        s_last_pages = s_page_count;
+        s_last_idle = s_idle_count;
         s_last_vf = s_frame_counter;
         s_last_report = now;
     }
@@ -283,7 +490,10 @@ void _updateScreenRect(int32_t x, int32_t y, int32_t w, int32_t h)
 uint8_t readpixel(uint8_t *location) { return *location; }
 void    drawpixel(uint8_t *location, uint8_t pixel) { *location = pixel; }
 
-int screencapture(char *filename, uint8_t inverseit) { (void)filename;(void)inverseit; return 0; }
+// screencapture() itself lives in duke_screenshot.cpp (it needs PNGenc, which is
+// C++). It reads the frame through get_framebuffer() above and the palette
+// through duke_display_palette_bgr888(), so nothing here has to be exposed
+// beyond those two.
 
 // ---------------------------------------------------------------------------
 // 2D / 16-colour helpers (editor/overhead map) — stubbed for M2.

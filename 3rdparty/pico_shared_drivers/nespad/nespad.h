@@ -12,6 +12,15 @@ extern uint8_t nespad_states[2];
 // NES pads are auto-detected and only populate bits 0-7 (A,B,Select,Start,
 // dpad), identical to nespad_states[].
 extern uint16_t nespad_states_ext[2];
+// fruitjam-doom local addition (candidate for pico_shared upstream): true when
+// the pad on that port was detected as a NES pad on the last read, false for a
+// SNES pad or an empty port. nespad_decode() already works this out from the 4
+// ID bits (a NES pad reads all four high, a SNES pad drives them so it never
+// can) and then strips them, so a caller cannot recover it from
+// nespad_states_ext[] afterwards. It matters because a NES pad's two buttons
+// land in the SNES serial positions B and Y, which is NOT where a caller wants
+// its A and B.
+extern bool nespad_is_nes[2];
 extern bool nespad_begin(uint8_t padnum, uint32_t cpu_khz, uint8_t clkPin, uint8_t dataPin,
                          uint8_t latPin, PIO _pio);
 extern void nespad_read_start(void);

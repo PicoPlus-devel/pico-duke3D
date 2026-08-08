@@ -523,6 +523,20 @@ void Error (int errorType, char  *error, ...)
 	// FIX_00043: Nicer exit on error. Ask the user to hit a key on exits and error exits.
    //getch();
 
+#ifdef PLATFORM_PICO
+   // Bare metal: exit() reboots (see _exit in src/pico/duke_boot.c), so a fatal
+   // Error() at startup was an invisible bootloop -- the message flashed past on
+   // a UART nobody has connected and the board restarted 1 ms later. Put it on
+   // the HDMI console and stop instead.
+   //
+   // An EMPTY message is the discriminator, and an exact one: it means the
+   // normal quit path, gameexit() -> Shutdown() -> Error(EXIT_SUCCESS, ""),
+   // which must keep rebooting (that is how a BUILD_FOR_BOOTLOADER image returns
+   // to the picker). Every non-empty Error() in the tree is a genuine fatal.
+   if (error && error[0] != '\0')
+      duke_fatal_halt();
+#endif
+
    exit (errorType);
 }
 

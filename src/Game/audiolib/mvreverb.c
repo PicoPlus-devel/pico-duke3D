@@ -1,7 +1,7 @@
 #include "multivoc.h"
 #include "_multivc.h"
 
-extern double *MV_FooBuffer;
+extern mixsample_t *MV_FooBuffer;
 extern int MV_BufferSize;
 extern int MV_SampleSize;
 extern int MV_MaxVolume;
@@ -265,7 +265,7 @@ void MV_16BitDownmix(char *dest, int count)
 
 	for (i = 0; i < count; i++)
 	{
-		int out = (int)((MV_FooBuffer[i] * (double)0x8000));
+		int out = (int)(MV_FooBuffer[i] * 32768.0f);
 		if (out < -32768) pdest[i] = -32768;
 		else if (out > 32767) pdest[i] = 32767;
 		else pdest[i] = out;
@@ -278,7 +278,7 @@ void MV_8BitDownmix(char *dest, int count)
 
 	for (i = 0; i < count; i++)
 	{
-		int out = ((int)((MV_FooBuffer[i] * (double)0x80)));
+		int out = (int)(MV_FooBuffer[i] * 128.0f);
 		if (out < -128) dest[i] = 0;
 		else if (out > 127) dest[i] = 255;
 		else dest[i] = out + 0x80;

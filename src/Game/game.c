@@ -7677,7 +7677,17 @@ void Logo(void)
 
 void loadtmb(void)
 {
+#ifdef PLATFORM_PICO
+    // 8000 bytes will not fit on core0's stack (PICO_STACK_SIZE, and even the
+    // raised 4 KB is half this). As a local it silently ran ~6 KB past the
+    // stack bottom and only survived because the memory under it happened to be
+    // unallocated. static instead: game.c is part of libduke, so this lands in
+    // PSRAM, and it is touched once at startup. AL_RegisterTimbreBank copies
+    // the bank into ADLIB_TimbreBank, so nothing retains this pointer.
+    static uint8_t tmb[8000];
+#else
     uint8_t  tmb[8000];
+#endif
     int32_t fil, l;
 
     fil = kopen4load("d3dtimbr.tmb",0);
@@ -8292,6 +8302,22 @@ int Duke3D_main(int argc,char  **argv)
 
 
     Startup();
+
+#ifdef PLATFORM_PICO
+    // Status LEDs, claimed here on purpose: this is the first point at which
+    // every other PIO consumer has taken what it needs. _platform_init() ran
+    // before us and gave pio0 to Pico-PIO-USB, and Startup() -> SoundStartup()
+    // -> FX_Init -> DSL_Init -> audio_i2s_setup just gave pio1 to I2S. The Fruit
+    // Jam's NeoPixel is GPIO 32, which needs a PIO whose GPIO base can be moved
+    // to 16, and the base can only be changed on a completely unused PIO — so
+    // going last means a failure here is a real diagnostic ("nothing was free")
+    // rather than a state machine stolen from audio or USB. It also needs the
+    // final clk_sys: ws2812_program_init samples it once for the bit clock.
+    {
+        extern void duke_leds_init(void);
+        duke_leds_init();
+    }
+#endif
 
     if( eightytwofifty && numplayers > 1 && (MusicDevice != NumSoundCards) )
     {
@@ -10609,6 +10635,37 @@ void CenterRudder(void)
 void takescreenshot(void)
 {
 	char  szFilename[256];
+#ifdef PLATFORM_PICO
+	// Bare-metal port: the name comes from duke_screenshot.cpp instead, as
+	// /screenshots/dukeNNNN.png on the SD card. Three reasons the block below
+	// cannot be used as it stands:
+	//
+	//  1. There is no RTC on this board, so the date/time name would read
+	//     1970 + uptime.
+	//  2. It is broken upstream anyway -- the nice name is built into text[],
+	//     but the two sprintf()s below format `tempbuf` into the path, and
+	//     tempbuf is the shared 2 KB scratch global. The filename was whatever
+	//     happened to be left in it.
+	//  3. mkdir(SCREENSHOTPATH) used to be a no-op on this port, so the
+	//     directory never existed. (That one is now fixed for real, over
+	//     f_mkdir in src/pico/duke_fatfs_io.c.)
+	//
+	// The existence pre-flight is folded into next_path(), which returns the
+	// first free slot, so SafeFileExists() has nothing left to add here.
+	extern int duke_screenshot_next_path(char *out, int outsz);
+
+	// Report on what actually happened, not just on the pre-flight: a card that
+	// fills up mid-write makes screencapture() fail, and saying "SCREEN SAVED"
+	// to that would be a lie.
+	if(duke_screenshot_next_path(szFilename, sizeof(szFilename)) != 0 ||
+	   screencapture(szFilename, 0) != 0)
+		sprintf(fta_quotes[103],"CAN'T WRITE FILE!");
+	else
+	{
+		sprintf(fta_quotes[103],"SCREEN SAVED");
+		sound(EXITMENUSOUND);
+	}
+#else
 	int i;
 	char  score[20];
 	time_t time4file;
@@ -10678,6 +10735,7 @@ void takescreenshot(void)
 	}
 	else
 		sprintf(fta_quotes[103],"CAN'T WRITE FILE!");
+#endif
 
 	FTA(103,&ps[screenpeek],1);
 

@@ -77,8 +77,7 @@ int32_t initgroupfile(const char  *filename)
     
     if (archive->fileDescriptor < 0){
         printf("Error: Unable to open file %s.\n",filename);
-        getchar();
-        exit(0);
+        DUKE_FATAL_ABORT();
     }
     
     
@@ -267,12 +266,19 @@ typedef struct openFile_s{
 static openFile_t openFiles[MAXOPENFILES];
 
 int32_t kopen4load(const char  *filename, int openOnlyFromGRP){
-    
+
 	int32_t     i, k;
     int32_t     newhandle;
 
     grpArchive_t* archive;
-    
+
+#ifdef PLATFORM_PICO
+    // The game probes for optional files with an empty name every frame. Bail
+    // out before attempting an SD open and scanning all GRP entries for it.
+    if (filename == NULL || filename[0] == '\0')
+        return(-1);
+#endif
+
     //Search a free slot
 	newhandle = MAXOPENFILES-1;
 	while (openFiles[newhandle].used && newhandle >= 0)
@@ -314,9 +320,21 @@ int32_t kopen4load(const char  *filename, int openOnlyFromGRP){
             }
         }
 	}
-    
+
+#if defined(PLATFORM_PICO) && defined(DUKE_FS_DIAG)
+    // Enable with -DDUKE_FS_DIAG=1 to see why a lookup missed (is the GRP index
+    // intact?). OFF by default: the game probes for optional files every frame,
+    // and a printf per miss costs ~6 ms of blocking UART at 115200 — enough to
+    // wreck the frame rate on its own.
+    printf("kopen4load MISS '%s' (onlyGRP=%d archives=%d files=%d first='%.12s')\n",
+           filename, openOnlyFromGRP, grpSet.num,
+           grpSet.num > 0 ? grpSet.archives[0].numFiles : -1,
+           (grpSet.num > 0 && grpSet.archives[0].numFiles > 0)
+               ? (char *)grpSet.archives[0].gfilelist[0] : "-");
+#endif
+
 	return(-1);
-    
+
 }
 
 int32_t kread(int32_t handle, void *buffer, int32_t leng){
@@ -328,8 +346,7 @@ int32_t kread(int32_t handle, void *buffer, int32_t leng){
     
     if (!openFile->used){
         printf("Invalide handle. Unrecoverable error.\n");
-        getchar();
-        exit(0);
+        DUKE_FATAL_ABORT();
     }
     
     //FILESYSTEM ? OS takes care of it !
@@ -384,8 +401,7 @@ int32_t klseek(int32_t handle, int32_t offset, int whence){
 	
     if (!openFiles[handle].used){
         printf("Invalide handle. Unrecoverable error.\n");
-        getchar();
-        exit(0);
+        DUKE_FATAL_ABORT();
     }
     
     // FILESYSTEM ? OS will take care of it.
@@ -421,8 +437,7 @@ int32_t kfilelength(int32_t handle)
     
     if (!openFile->used){
         printf("Invalide handle. Unrecoverable error.\n");
-        getchar();
-        exit(0);
+        DUKE_FATAL_ABORT();
     }
     
     if (openFile->type == SYSTEM_FILE){
@@ -446,8 +461,7 @@ void kclose(int32_t handle)
     
     if (!openFile->used){
         printf("Invalide handle. Unrecoverable error.\n");
-        getchar();
-        exit(0);
+        DUKE_FATAL_ABORT();
     }
     
     if (openFile->type == SYSTEM_FILE){
@@ -468,6 +482,28 @@ static uint8_t  lzwbuflock[5];
 static short *lzwbuf2, *lzwbuf3;
 
 
+
+#ifdef PLATFORM_PICO
+/* The LZW scratch buffers come from the tile cache, and the code below decides
+ * whether to (re)allocate them purely on "== NULL". A pointer corrupted by
+ * anything other than allocache() therefore sails through and gets handed to
+ * compress(), which faults inside clearbuf() -- far from whatever did the
+ * damage. Check the handle really points into the cache, and say so if not, so
+ * the corruption is reported where it is detected instead of crashing later. */
+static uint8_t *lzw_handle(uint8_t **h, const char *name)
+{
+	if (*h != NULL && !cache_ptr_valid(*h))
+	{
+		printf("filesystem: %s handle corrupt (%p) - reallocating\n",
+		       name, (void *)*h);
+		*h = NULL;
+	}
+	return *h;
+}
+#define LZWH(h) lzw_handle((uint8_t **)&(h), #h)
+#else
+#define LZWH(h) (h)
+#endif
 
 int32_t compress(uint8_t  *lzwinbuf, int32_t uncompleng, uint8_t  *lzwoutbuf)
 {
@@ -579,11 +615,11 @@ void kdfread(void *buffer, size_t dasizeof, size_t count, int32_t fil)
 	uint8_t  *ptr;
     
 	lzwbuflock[0] = lzwbuflock[1] = lzwbuflock[2] = lzwbuflock[3] = lzwbuflock[4] = 200;
-	if (lzwbuf1 == NULL) allocache(&lzwbuf1,LZWSIZE+(LZWSIZE>>4),&lzwbuflock[0]);
-	if (lzwbuf2 == NULL) allocache((uint8_t**)&lzwbuf2,(LZWSIZE+(LZWSIZE>>4))*2,&lzwbuflock[1]);
-	if (lzwbuf3 == NULL) allocache((uint8_t**)&lzwbuf3,(LZWSIZE+(LZWSIZE>>4))*2,&lzwbuflock[2]);
-	if (lzwbuf4 == NULL) allocache(&lzwbuf4,LZWSIZE,&lzwbuflock[3]);
-	if (lzwbuf5 == NULL) allocache(&lzwbuf5,LZWSIZE+(LZWSIZE>>4),&lzwbuflock[4]);
+	if (LZWH(lzwbuf1) == NULL) allocache(&lzwbuf1,LZWSIZE+(LZWSIZE>>4),&lzwbuflock[0]);
+	if (LZWH(lzwbuf2) == NULL) allocache((uint8_t**)&lzwbuf2,(LZWSIZE+(LZWSIZE>>4))*2,&lzwbuflock[1]);
+	if (LZWH(lzwbuf3) == NULL) allocache((uint8_t**)&lzwbuf3,(LZWSIZE+(LZWSIZE>>4))*2,&lzwbuflock[2]);
+	if (LZWH(lzwbuf4) == NULL) allocache(&lzwbuf4,LZWSIZE,&lzwbuflock[3]);
+	if (LZWH(lzwbuf5) == NULL) allocache(&lzwbuf5,LZWSIZE+(LZWSIZE>>4),&lzwbuflock[4]);
     
 	if (dasizeof > LZWSIZE) { count *= dasizeof; dasizeof = 1; }
 	ptr = (uint8_t  *)buffer;
@@ -617,11 +653,11 @@ void dfread(void *buffer, size_t dasizeof, size_t count, FILE *fil)
 	uint8_t  *ptr;
     
 	lzwbuflock[0] = lzwbuflock[1] = lzwbuflock[2] = lzwbuflock[3] = lzwbuflock[4] = 200;
-	if (lzwbuf1 == NULL) allocache(&lzwbuf1,LZWSIZE+(LZWSIZE>>4),&lzwbuflock[0]);
-	if (lzwbuf2 == NULL) allocache((uint8_t**)&lzwbuf2,(LZWSIZE+(LZWSIZE>>4))*2,&lzwbuflock[1]);
-	if (lzwbuf3 == NULL) allocache((uint8_t**)&lzwbuf3,(LZWSIZE+(LZWSIZE>>4))*2,&lzwbuflock[2]);
-	if (lzwbuf4 == NULL) allocache(&lzwbuf4,LZWSIZE,&lzwbuflock[3]);
-	if (lzwbuf5 == NULL) allocache(&lzwbuf5,LZWSIZE+(LZWSIZE>>4),&lzwbuflock[4]);
+	if (LZWH(lzwbuf1) == NULL) allocache(&lzwbuf1,LZWSIZE+(LZWSIZE>>4),&lzwbuflock[0]);
+	if (LZWH(lzwbuf2) == NULL) allocache((uint8_t**)&lzwbuf2,(LZWSIZE+(LZWSIZE>>4))*2,&lzwbuflock[1]);
+	if (LZWH(lzwbuf3) == NULL) allocache((uint8_t**)&lzwbuf3,(LZWSIZE+(LZWSIZE>>4))*2,&lzwbuflock[2]);
+	if (LZWH(lzwbuf4) == NULL) allocache(&lzwbuf4,LZWSIZE,&lzwbuflock[3]);
+	if (LZWH(lzwbuf5) == NULL) allocache(&lzwbuf5,LZWSIZE+(LZWSIZE>>4),&lzwbuflock[4]);
     
 	if (dasizeof > LZWSIZE) {
         count *= dasizeof;
@@ -660,11 +696,11 @@ void dfwrite(void *buffer, size_t dasizeof, size_t count, FILE *fil)
 	uint8_t  *ptr;
     
 	lzwbuflock[0] = lzwbuflock[1] = lzwbuflock[2] = lzwbuflock[3] = lzwbuflock[4] = 200;
-	if (lzwbuf1 == NULL) allocache(&lzwbuf1,LZWSIZE+(LZWSIZE>>4),&lzwbuflock[0]);
-	if (lzwbuf2 == NULL) allocache((uint8_t**)&lzwbuf2,(LZWSIZE+(LZWSIZE>>4))*2,&lzwbuflock[1]);
-	if (lzwbuf3 == NULL) allocache((uint8_t**)&lzwbuf3,(LZWSIZE+(LZWSIZE>>4))*2,&lzwbuflock[2]);
-	if (lzwbuf4 == NULL) allocache(&lzwbuf4,LZWSIZE,&lzwbuflock[3]);
-	if (lzwbuf5 == NULL) allocache(&lzwbuf5,LZWSIZE+(LZWSIZE>>4),&lzwbuflock[4]);
+	if (LZWH(lzwbuf1) == NULL) allocache(&lzwbuf1,LZWSIZE+(LZWSIZE>>4),&lzwbuflock[0]);
+	if (LZWH(lzwbuf2) == NULL) allocache((uint8_t**)&lzwbuf2,(LZWSIZE+(LZWSIZE>>4))*2,&lzwbuflock[1]);
+	if (LZWH(lzwbuf3) == NULL) allocache((uint8_t**)&lzwbuf3,(LZWSIZE+(LZWSIZE>>4))*2,&lzwbuflock[2]);
+	if (LZWH(lzwbuf4) == NULL) allocache(&lzwbuf4,LZWSIZE,&lzwbuflock[3]);
+	if (LZWH(lzwbuf5) == NULL) allocache(&lzwbuf5,LZWSIZE+(LZWSIZE>>4),&lzwbuflock[4]);
     
 	if (dasizeof > LZWSIZE) { count *= dasizeof; dasizeof = 1; }
 	ptr = (uint8_t  *)buffer;

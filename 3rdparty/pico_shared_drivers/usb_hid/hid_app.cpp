@@ -429,10 +429,25 @@ extern "C"
         else if (isMantaPad(vid, pid))
         {
             printf("MantaPad detected - device address = %d, instance = %d, player %d is mounted - ", dev_addr, instance, player + 1);
+#if MANTAPAD_DEFAULT_SNES_MODE
+            // pico-duke3D: default this pad to SNES mode instead of NES mode.
+            //
+            // In NES mode only two face buttons are reported, and because
+            // NESB == X the pad's PHYSICAL X arrives as logical A while
+            // physical A arrives as logical B -- which Duke has bound to
+            // Escape, so pressing what looks like fire opened the menu until
+            // the player happened to press Y. Duke needs all four face buttons
+            // anyway, so NES mode is never the right default here.
+            printf("defaulting to SNES mode\n");
+            isManta[player] = 2;
+            gp.GamePadName = "Manta SNES";
+            gp.GamePadShortName = "MSNES";
+#else
             printf("Press Y to activate SNES mode\n");
             isManta[player] = 1;
             gp.GamePadName = "Manta NES";
             gp.GamePadShortName = "MNES";
+#endif
         }
         else if (isMantaPadVariant(vid, pid))
         {

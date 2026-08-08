@@ -3,8 +3,11 @@
 //
 //  Video/palette/timer/input now live in pico_display.c; this file keeps only
 //  the small POSIX-ish stubs the engine needs that have no home yet: a
-//  filelength() (filesystem.c only defines it on __linux__/__APPLE__), a no-op
-//  mkdir(), and the directory-enumeration shims (no SD file browser yet).
+//  filelength() (filesystem.c only defines it on __linux__/__APPLE__) and the
+//  directory-enumeration shims (no SD file browser yet).
+//
+//  mkdir() used to be a no-op here. It is now backed by f_mkdir over in
+//  duke_fatfs_io.c, with the rest of the filesystem-backed POSIX calls.
 //
 #include <stdint.h>
 #include <unistd.h>
@@ -20,9 +23,6 @@ int32_t filelength(int32_t fd)
     lseek(fd, cur, SEEK_SET);
     return (int32_t)end;
 }
-
-// mkdir: newlib declares it (2-arg) but has no syscall; no-op for now.
-int mkdir(const char *path, mode_t mode) { (void)path;(void)mode; return 0; }
 
 // dirent shim implementations (no directory enumeration on the SD yet).
 DIR           *opendir(const char *name) { (void)name; return 0; }

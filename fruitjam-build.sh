@@ -5,7 +5,7 @@
 # force-included so the vendored pico_shared drivers see the HSTX/I2S/SD/PSRAM
 # pin macros at compile time.
 #
-# Artifact: build_fruitjam/src/pico/duke3d.uf2
+# Artifact: build_fruitjam/src/pico/duke3d_game.uf2
 set -e
 TAG=fruitjam
 BUILD=build_${TAG}
@@ -31,4 +31,4 @@ cmake -S . -B "$BUILD" \
 cmake --build "$BUILD" -j"$(nproc)"
 
 echo
-echo "Artifact: $BUILD/src/pico/duke3d.uf2"
+echo "Artifact: $BUILD/src/pico/duke3d_game.uf2"

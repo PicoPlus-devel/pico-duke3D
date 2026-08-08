@@ -9,12 +9,19 @@
 //        HDMI  : hstx_push_audio_sample() -> data-island queue (core1 scanout)
 //        jack  : audio_i2s_enqueue_sample() -> I2S DMA -> TLV320 headphones
 //
-//  Routing policy (project spec, same as fruitjam-doom):
+//  Routing policy depends on the board (DUKE_AUDIO_EXCLUSIVE_SINK below).
+//
+//  With a TLV320 codec and its headphone-detect IRQ (Fruit Jam) the sinks are
+//  EXCLUSIVE — the project spec, same as fruitjam-doom:
 //   - default sink is HDMI; the internal speaker NEVER plays.
 //   - headphone plug  -> samples go to I2S only; HDMI queue drains to
 //     auto-inserted silence islands (= muted).
 //   - headphone unplug -> samples return to HDMI; I2S is fed zeros to keep
 //     BCLK/DAC-PLL alive (prevents pops); speaker re-muted.
+//
+//  On a board with a bare DAC and no jack detect (Murmulator M2's PCM5100A)
+//  there is nothing to switch on, so both sinks get the real samples and the
+//  user picks with their cables.
 //
 //  DisableInterrupts/RestoreInterrupts (no-ops in the SDL build's dsl.c) are
 //  implemented as real IRQ save/disable here: they are what protects the
@@ -33,6 +40,7 @@
 #include "tlv320dac3100.h"
 #include "hstx_packet.h"              // pico_hdmi data-island audio
 #include "hstx_data_island_queue.h"
+#include "duke_leds.h"                // duke_vu_add_chunk (stubs out with no strip)
 
 #include "../Game/audiolib/dsl.h"
 
@@ -42,6 +50,20 @@
 
 #define DUKE_AUDIO_RATE 48000   // HDMI exact-lock rate (N=6144/CTS=25200);
                                 // multivoc reads it back via DSL_GetPlaybackRate
+
+// I2S back end, from the board's cflags header (audio_i2s.h defines the ids).
+#ifndef DUKE_AUDIO_I2S_DRIVER
+#define DUKE_AUDIO_I2S_DRIVER PICO_AUDIO_I2S_DRIVER_TLV320
+#endif
+
+// Can this board tell where the listener is? Only a TLV320 with its
+// headset-detect interrupt wired can, and only then is it right to mute one
+// sink: everywhere else muting HDMI would silence the board's only output.
+#if DUKE_AUDIO_I2S_DRIVER == PICO_AUDIO_I2S_DRIVER_TLV320 && PICO_AUDIO_I2S_INTERRUPT_PIN != -1
+#define DUKE_AUDIO_EXCLUSIVE_SINK 1
+#else
+#define DUKE_AUDIO_EXCLUSIVE_SINK 0
+#endif
 
 // audiolib critical-section guards, implemented further down as a recursive
 // cross-core spinlock (used by the pump before their definition).
@@ -97,6 +119,24 @@ static void __not_in_flash_func(hstx_push_audio_sample)(int left, int right)
 // The pump: mix divisions on demand and fan out to the active sink.
 // Runs in timer-IRQ context on core0 (~3 ms cadence).
 // ---------------------------------------------------------------------------
+// One mixed frame out to whichever sinks this board drives. On an exclusive-
+// sink board that is the one the jack state selected; otherwise both, since
+// there is no way to know which cable the listener is using.
+static inline void __not_in_flash_func(emit_sample)(int16_t l, int16_t r, sink_t sink)
+{
+#if DUKE_AUDIO_EXCLUSIVE_SINK
+    if (sink == SINK_HEADPHONES)
+        audio_i2s_enqueue_sample(((uint32_t)(uint16_t)l << 16) | (uint16_t)r);
+    else
+        hstx_push_audio_sample(l, r);
+#else
+    (void)sink;
+    if (s_i2s_ok)
+        audio_i2s_enqueue_sample(((uint32_t)(uint16_t)l << 16) | (uint16_t)r);
+    hstx_push_audio_sample(l, r);
+#endif
+}
+
 static void __not_in_flash_func(push_division_to_sink)(const uint8_t *div, sink_t sink)
 {
     // Decode per MixMode; Duke defaults to STEREO|SIXTEEN_BIT (64 frames).
@@ -107,10 +147,7 @@ static void __not_in_flash_func(push_division_to_sink)(const uint8_t *div, sink_
             int16_t l, r;
             if (s_mixmode & STEREO) { l = s[2 * i]; r = s[2 * i + 1]; }
             else                    { l = r = s[i]; }
-            if (sink == SINK_HEADPHONES)
-                audio_i2s_enqueue_sample(((uint32_t)(uint16_t)l << 16) | (uint16_t)r);
-            else
-                hstx_push_audio_sample(l, r);
+            emit_sample(l, r, sink);
         }
     } else {
         const uint8_t *s = div;      // unsigned 8-bit
@@ -123,10 +160,7 @@ static void __not_in_flash_func(push_division_to_sink)(const uint8_t *div, sink_
             } else {
                 l = r = (int16_t)((s[i] - 128) << 8);
             }
-            if (sink == SINK_HEADPHONES)
-                audio_i2s_enqueue_sample(((uint32_t)(uint16_t)l << 16) | (uint16_t)r);
-            else
-                hstx_push_audio_sample(l, r);
+            emit_sample(l, r, sink);
         }
     }
 }
@@ -140,11 +174,175 @@ static void __not_in_flash_func(push_division_to_sink)(const uint8_t *div, sink_
 // cross-core spinlock below, taken per mixed division so core0 never waits
 // more than ~100 us.
 // ---------------------------------------------------------------------------
+// How much queued audio the pump aims to keep in the active sink (~43 ms).
+// The rings are larger (64 ms DI / 85 ms I2S) so pushes never drop.
+#define PUMP_TARGET_I2S_QUEUED   2048   // samples of the 4096-sample I2S ring
+#define PUMP_TARGET_DI_LEVEL      512   // islands of the 768-island HDMI ring
+
 static volatile bool s_pumping = false;   // pump body active (for teardown sync)
 
-static void __not_in_flash_func(pump_once)(void)
+// Has the sink reached its queue target (or run out of room for one more
+// division)? On a dual-sink board both rings are fed from the same loop, so
+// EITHER of them being full has to stop it — pushing into a full ring just
+// drops samples. The two rings are clocked from different domains (I2S BCLK
+// off clk_sys via PIO, HDMI data islands off clk_hstx), so they drift apart by
+// a few ppm and the slower consumer ends up pacing the mixer. That is inherent
+// to driving two independent clocks from one producer and is what fruitjam-doom
+// ships on these boards too.
+static inline bool __not_in_flash_func(sink_at_target)(sink_t sink, int frames_per_div)
+{
+#if DUKE_AUDIO_EXCLUSIVE_SINK
+    if (sink == SINK_HEADPHONES) {
+        if (!s_i2s_ok) return true;
+        const int free = audio_i2s_get_freebuffer_size();
+        return (I2S_AUDIO_RING_SIZE - free) >= PUMP_TARGET_I2S_QUEUED ||
+               free < frames_per_div;
+    }
+    return hstx_di_queue_get_level() >= PUMP_TARGET_DI_LEVEL;
+#else
+    (void)sink;
+    if (hstx_di_queue_get_level() >= PUMP_TARGET_DI_LEVEL)
+        return true;
+    if (s_i2s_ok) {
+        const int free = audio_i2s_get_freebuffer_size();
+        if ((I2S_AUDIO_RING_SIZE - free) >= PUMP_TARGET_I2S_QUEUED ||
+            free < frames_per_div)
+            return true;
+    }
+    return false;
+#endif
+}
+
+// Did the pump arrive with a sink already near-empty? Counted, not corrected —
+// the 1 Hz report in duke_pico_idle uses it to tell CPU starvation apart from
+// everything else that can make audio sound wrong.
+static inline bool __not_in_flash_func(sink_starved)(sink_t sink)
+{
+    const bool i2s_low = s_i2s_ok &&
+        (I2S_AUDIO_RING_SIZE - audio_i2s_get_freebuffer_size()) < (PUMP_TARGET_I2S_QUEUED / 4);
+    const bool di_low = hstx_di_queue_get_level() < (PUMP_TARGET_DI_LEVEL / 4);
+#if DUKE_AUDIO_EXCLUSIVE_SINK
+    return (sink == SINK_HEADPHONES) ? i2s_low : di_low;
+#else
+    (void)sink;
+    return i2s_low || di_low;
+#endif
+}
+
+// Serializes the two pumpers (core1 background task + core0 safety net) so
+// divisions are mixed and pushed in order. Deliberately SEPARATE from the
+// audiolib critical-section lock: core0's frequent FX_*/MV_* calls take only
+// that one, so they never wait behind a sink push (the HDMI path BCH/TERC4
+// encodes 16 data islands per division — holding the audiolib lock across that
+// blocked the game loop and cost most of the frame rate). Lock order is always
+// pump lock -> audiolib lock, never the reverse, so there is no deadlock.
+static spin_lock_t *s_pump_lock;
+static uint32_t s_starve_count;           // pump arrived with the sink near-empty
+
+// Production-rate instrumentation. The whole in-level audio hunt kept stalling
+// on not knowing WHICH of two very different failures we had: core1 unable to
+// mix fast enough, or core1 mixing fine but hardly ever being called. These
+// separate them directly.
+//   bg = duke_audio_core1_task() entries/s. The driver calls it from core1's
+//        tight loop, so this should be in the thousands. If it is tens, each
+//        pump_once() is taking milliseconds and the loop is the problem.
+//   dv = divisions actually mixed/s. This is the production rate, and it has a
+//        known required value: 48000 / frames_per_div (= 750/s at 64 frames).
+//        Below that, the sink MUST drain no matter how big the ring is.
+static uint32_t s_bg_calls, s_divs_mixed;
+
+// Per-stage timing, in microseconds accumulated per report interval. dv=122/s
+// against need=187/s means one 256-frame division costs ~8 ms to produce
+// in-level, versus comfortably under 5 ms in the menu. These four counters
+// partition that 8 ms so the next change targets the actual consumer:
+//   lock  = core1 blocked acquiring the audiolib spinlock, i.e. core0 holding
+//           it across FX_*/MV_* calls (suspicion: an uncached sound lump being
+//           pulled off SD through cache1d while the lock is held).
+//   svc   = MV_ServiceVoc: mixing all active SFX voices. In-level there are
+//           many voices and every voice's VOC data lives in PSRAM, read through
+//           the XIP cache core0 is thrashing with texture fetches.
+//   music = duke_music_mix: OPL render + 49716->48000 resample.
+//   push  = push_division_to_sink: BCH/TERC4 encode of 64 data islands.
+static uint32_t s_us_lock, s_us_svc, s_us_music, s_us_push;
+
+// Timing the stages costs six time_us_32() reads per division (~1100/s), which
+// is immaterial, but it is pure diagnostics — compile it out of the ship build.
+#if DUKE_VIDEO_DIAG
+#define STAGE_T(v)          uint32_t v = time_us_32()
+#define STAGE_ADD(acc,b,a)  (acc) += (b) - (a)
+#else
+#define STAGE_T(v)          ((void)0)
+#define STAGE_ADD(acc,b,a)  ((void)0)
+#endif
+
+void duke_audio_take_rate_stats(uint32_t *bg, uint32_t *dv, uint32_t *fpd)
+{
+    *bg = s_bg_calls;    s_bg_calls = 0;
+    *dv = s_divs_mixed;  s_divs_mixed = 0;
+    *fpd = (uint32_t)(s_divsize / 4);
+}
+
+// Returns per-stage microseconds since the last call (read-and-clear).
+void duke_audio_take_stage_us(uint32_t *lock, uint32_t *svc, uint32_t *music, uint32_t *push)
+{
+    *lock  = s_us_lock;  s_us_lock  = 0;
+    *svc   = s_us_svc;   s_us_svc   = 0;
+    *music = s_us_music; s_us_music = 0;
+    *push  = s_us_push;  s_us_push  = 0;
+}
+
+// Read-and-clear (called ~1 Hz from core0's idle hook).
+uint32_t duke_audio_take_starve_count(void)
+{
+    uint32_t c = s_starve_count;
+    s_starve_count = 0;
+    return c;
+}
+
+// ---------------------------------------------------------------------------
+// Deferred sound-completion callbacks.
+//
+// multivoc invokes the game's FX callback (Duke's TestCallBack) when a voice
+// finishes, and that callback WRITES game state (sprite[], sector[],
+// hittype[], SoundOwner[]). The mixer runs from the pump on either core and
+// from inside the engine's level-load/art-cache loops, where those arrays are
+// mid-update — calling it there indexes them with garbage and corrupts PSRAM.
+// So multivoc queues here instead (see MV_INVOKE_CALLBACK in multivoc.c) and
+// duke_audio_run_deferred_callbacks() dispatches from a frame boundary on
+// core0.
+// ---------------------------------------------------------------------------
+#define CB_QUEUE_SIZE 64
+typedef struct { void (*fn)(unsigned long); unsigned long val; } cb_entry_t;
+static cb_entry_t s_cbq[CB_QUEUE_SIZE];
+static volatile uint32_t s_cbq_head, s_cbq_tail;
+static uint32_t s_cbq_dropped;
+
+void duke_audio_defer_callback(void (*fn)(unsigned long), unsigned long val)
+{
+    if (!fn) return;
+    uint32_t next = (s_cbq_head + 1) % CB_QUEUE_SIZE;
+    if (next == s_cbq_tail) { s_cbq_dropped++; return; }   // full: drop
+    s_cbq[s_cbq_head].fn = fn;
+    s_cbq[s_cbq_head].val = val;
+    s_cbq_head = next;
+}
+
+// Call ONLY from core0 with the engine in a consistent state (frame boundary).
+void duke_audio_run_deferred_callbacks(void)
+{
+    while (s_cbq_tail != s_cbq_head) {
+        cb_entry_t e = s_cbq[s_cbq_tail];
+        s_cbq_tail = (s_cbq_tail + 1) % CB_QUEUE_SIZE;
+        if (e.fn) e.fn(e.val);
+    }
+}
+
+static void __not_in_flash_func(pump_once)(int max_divisions)
 {
     if (!s_playing) return;
+
+    if (!s_pump_lock) s_pump_lock = spin_lock_init(spin_lock_claim_unused(true));
+    spin_lock_unsafe_blocking(s_pump_lock);
 
     const sink_t sink = s_sink;
     const int frames_per_div = s_divsize / 4;   // S16 stereo (worst case)
@@ -156,36 +354,69 @@ static void __not_in_flash_func(pump_once)(void)
     // audible crackle even at 60 fps). The 43 ms target keeps latency
     // moderate while bridging frame gaps; the rings are larger (64/85 ms) so
     // pushes never drop.
-    #define PUMP_TARGET_I2S_QUEUED   2048   // samples (~43 ms of 4096 ring)
-    #define PUMP_TARGET_DI_LEVEL      512   // islands (~43 ms of 768 ring)
-    for (int guard = 0; guard < 64; guard++) {
-        if (sink == SINK_HEADPHONES) {
-            if (!s_i2s_ok) break;
-            int queued = I2S_AUDIO_RING_SIZE - audio_i2s_get_freebuffer_size();
-            if (queued >= PUMP_TARGET_I2S_QUEUED ||
-                audio_i2s_get_freebuffer_size() < frames_per_div)
-                break;
-        } else {
-            if (hstx_di_queue_get_level() >= PUMP_TARGET_DI_LEVEL)
-                break;
-        }
-        // Mix one division + advance the MIDI sequencer under the audio lock
-        // (excludes core0's FX_Play/MUSIC_* mutations); push it lock-free.
+    // Starvation detector: if the active sink has fallen to a small fraction of
+    // its target when we arrive, the pump is not keeping up — that is audible as
+    // music running slow/gappy and chopped SFX. Counted, not fixed, here: the
+    // 1 Hz report in duke_pico_idle tells us whether a "still sounds wrong"
+    // complaint is CPU starvation or something else entirely.
+    if (sink_starved(sink))
+        s_starve_count++;
+
+    for (int guard = 0; guard < max_divisions; guard++) {
+        if (sink_at_target(sink, frames_per_div))
+            break;
+        // Mix under the AUDIOLIB lock (shared with core0's FX_*/MV_* calls) —
+        // keep this section as short as possible.
+        s_divs_mixed++;
+        STAGE_T(t0);
         uint32_t lk = DisableInterrupts();
+        STAGE_T(t1);
         s_callback();   // MV_ServiceVoc: mixes next division, advances MV_MixPage
-        if ((s_mixmode & (STEREO | SIXTEEN_BIT)) == (STEREO | SIXTEEN_BIT)) {
+        STAGE_T(t2);
+        uint8_t *div = (uint8_t *)&s_buffer[MV_MixPage * s_divsize];
+        const bool s16_stereo =
+            (s_mixmode & (STEREO | SIXTEEN_BIT)) == (STEREO | SIXTEEN_BIT);
+        if (s16_stereo) {
             extern void duke_music_mix(int16_t *stereo, int frames);
-            duke_music_mix((int16_t *)&s_buffer[MV_MixPage * s_divsize], frames_per_div);
+            duke_music_mix((int16_t *)div, frames_per_div);
         }
+        STAGE_T(t3);
         RestoreInterrupts(lk);
-        push_division_to_sink((const uint8_t *)&s_buffer[MV_MixPage * s_divsize], sink);
+        STAGE_ADD(s_us_lock,  t1, t0);
+        STAGE_ADD(s_us_svc,   t2, t1);
+        STAGE_ADD(s_us_music, t3, t2);
+
+        // VU meter tap: one pass over the left channel of the division we are
+        // about to hand to the sink. After the music mix so the meter shows what
+        // is actually heard, outside the audiolib lock so it cannot lengthen the
+        // critical section, and before the push so it is written once rather than
+        // once per sink. Compiles to nothing on a board without a strip.
+        if (s16_stereo)
+            duke_vu_add_chunk((const int16_t *)div, (unsigned)frames_per_div);
+
+        // Push OUTSIDE the audiolib lock. The pump lock still guarantees only
+        // one pumper is here, so the sink helpers' static state is safe.
+        STAGE_T(t4);
+        push_division_to_sink(div, sink);
+#if DUKE_VIDEO_DIAG
+        s_us_push += time_us_32() - t4;
+#endif
     }
 
-    // Keep the I2S clock chain alive with silence while HDMI is active.
+#if DUKE_AUDIO_EXCLUSIVE_SINK
+    // Keep the I2S clock chain alive with silence while HDMI is active, so the
+    // DAC's PLL stays locked and unplugging headphones doesn't pop.
+    //
+    // Only correct when the sinks are exclusive. On a dual-sink board this loop
+    // would top the ring up with zeros AHEAD of the real samples the next pass
+    // pushes, i.e. it would silence the DAC completely.
     if (sink == SINK_HDMI && s_i2s_ok) {
         int free = audio_i2s_get_freebuffer_size();
         while (free-- > 0) audio_i2s_enqueue_sample(0);
     }
+#endif
+
+    spin_unlock_unsafe(s_pump_lock);
 }
 
 // core1 background task (registered via video_output_set_background_task in
@@ -193,20 +424,48 @@ static void __not_in_flash_func(pump_once)(void)
 void __not_in_flash_func(duke_audio_core1_task)(void)
 {
     if (!s_playing) return;
+    s_bg_calls++;
     s_pumping = true;
-    pump_once();
+    pump_once(64);          // core1: fill to target
     s_pumping = false;
 }
 
-// Legacy frame-context entry — now a no-op (core1 owns the pump); kept so
-// existing call sites need no change.
-void duke_audio_pump(void) { }
+// core0 entry, called from the engine's faketimerhandler/idle hook (which fires
+// from all over the render loops, not just once per frame).
+//
+// The pump is fed from BOTH cores on purpose. Core1 alone is not enough: it
+// also services the HSTX scanline ISR, and while core0 streams tiles from
+// PSRAM the shared QMI bus stalls core1's code fetches — starving the pump,
+// which in this design makes music play SLOW (the MIDI clock advances with
+// rendered samples) and chops SFX in the same stream. Whichever core has slack
+// fills the rings; the queue targets make the other one early-out cheaply.
+// Both paths hold the recursive cross-core audiolib spinlock while mixing.
+void duke_audio_pump(void)
+{
+    // DELIBERATELY A NO-OP.
+    //
+    // core1's background task runs in a tight loop and keeps the sink at its
+    // target on its own — measured on hardware: di_lvl 500-535 against a target
+    // of 512, with the underrun counter frozen. So mixing here bought nothing
+    // and cost everything: this hook is called from the engine's render INNER
+    // LOOPS, and in-level the game frame rate collapsed to 4-15/s with it
+    // enabled (the menu, which barely calls this, stayed at ~50/s).
+    //
+    // Kept as a symbol so the existing call sites (faketimerhandler ->
+    // duke_pico_idle, sampletimer) need no edits, and so this note survives.
+}
 
 // ---------------------------------------------------------------------------
 // Headphone jack — poll from frame context (I2C traffic; NOT the pump IRQ).
 // ---------------------------------------------------------------------------
 void duke_audio_poll_headphone(void)
 {
+#if !DUKE_AUDIO_EXCLUSIVE_SINK
+    // No codec / no detect pin: both sinks are always live, nothing to switch.
+    // (tlv320_poll_headphone would short-circuit on !s_active anyway; skipping
+    // the call keeps the frame loop honest about what this board can do.)
+    return;
+#else
     if (!s_i2s_ok) return;
     enum headphone_toggle_t ev = tlv320_poll_headphone();
     if (ev == HP_TOGGLE_CONNECT) {
@@ -217,6 +476,7 @@ void duke_audio_poll_headphone(void)
         audio_i2s_muteInternalSpeaker(true);   // spec: speaker never plays
         printf("audio: headphones DISCONNECT -> HDMI\n");
     }
+#endif
 }
 
 // ---------------------------------------------------------------------------
@@ -230,18 +490,24 @@ char *DSL_ErrorString(int ErrorNumber)
 
 int DSL_Init(void)
 {
-    // TLV320 + I2S bring-up (i2c, codec regs incl. headset detect, PIO1 SM,
-    // DMA chan 6 -> DMA_IRQ_1, leaving DMA_IRQ_0 for HSTX).
-    audio_i2s_hw_t *i2s = audio_i2s_setup(PICO_AUDIO_I2S_DRIVER_TLV320,
+    // DAC + I2S bring-up (for a TLV320: i2c, codec regs incl. headset detect;
+    // for a bare PCM5100A just the PIO SM). DMA chan 6 -> DMA_IRQ_1, leaving
+    // DMA_IRQ_0 for HSTX. The driver id comes from the board's cflags header.
+    audio_i2s_hw_t *i2s = audio_i2s_setup(DUKE_AUDIO_I2S_DRIVER,
                                           DUKE_AUDIO_RATE, /*dmachan=*/6);
     s_i2s_ok = (i2s != NULL);
     if (s_i2s_ok) {
+        // Both are no-ops on a board without a TLV320 (every tlv320_* entry
+        // point short-circuits on !s_active), so this needs no board guard.
         audio_i2s_muteInternalSpeaker(true);
         audio_i2s_setVolume(14);
     } else {
-        printf("audio: I2S/TLV320 setup FAILED — HDMI-only, no jack detect\n");
+        printf("audio: I2S setup FAILED (driver %d) — HDMI only\n",
+               DUKE_AUDIO_I2S_DRIVER);
     }
-    printf("audio: DSL_Init ok (%d Hz, sink=HDMI)\n", DUKE_AUDIO_RATE);
+    printf("audio: DSL_Init ok (%d Hz, sinks=%s)\n", DUKE_AUDIO_RATE,
+           DUKE_AUDIO_EXCLUSIVE_SINK ? "HDMI or headphones (jack detect)"
+                                     : "HDMI + I2S");
     return DSL_Ok;
 }
 

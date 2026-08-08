@@ -37,6 +37,7 @@ extern int32 ScreenWidth;
 extern int32 ScreenHeight;
 extern int32_t BFullScreen;
 
+
 void CONFIG_ReadSetup( void );
 void CONFIG_GetSetupFilename( void );
 void CONFIG_WriteSetup( void );

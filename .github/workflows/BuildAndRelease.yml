@@ -1,0 +1,100 @@
+name: Build and create a release
+
+# Two ways in:
+#
+#  1. Push a tag:
+#         git tag v1.0 && git push origin v1.0
+#
+#  2. Run this workflow manually with a "tag" input:
+#         gh workflow run BuildAndRelease.yml -f tag=v1.0
+#     The release step creates the tag itself (tag_name + target_commitish), so a
+#     release can be cut without a tag push. Dispatching with an EMPTY tag builds
+#     everything and releases nothing -- that is the dry run to use before tagging.
+#
+# The job body is deliberately thin: everything it does is `./buildAll.sh` and
+# `./release-notes.sh`, so the pipeline can be tested locally by running those two
+# scripts. See README.md, section "Cutting a release".
+on:
+    push:
+        tags:
+          - "v*.*-alpha"
+          - "v*.*.*"
+          - "v*.*"
+    workflow_dispatch:
+        inputs:
+            tag:
+                description: 'Tag to create and release (e.g. v1.0). Leave empty to build without releasing.'
+                required: false
+                type: string
+
+# Allow the release step to write back to the repository
+permissions:
+    contents: write
+
+jobs:
+    build-release:
+        runs-on: self-hosted
+        name: Build every board variant and create a release
+        steps:
+
+          # No `submodules: recursive`: this repository has no .gitmodules. The
+          # pico_shared drivers, tusb_xinput, emu8950 and the Chocolate Duke3D
+          # engine are all vendored in-tree.
+          - name: Check out this repository
+            uses: actions/checkout@v6
+
+          - name: Resolve the tag to build and release
+            id: ver
+            run: |
+                 if [ "${{ github.event_name }}" = "push" ]; then
+                      tag="${GITHUB_REF#refs/tags/}"
+                 else
+                      tag="${{ inputs.tag }}"
+                 fi
+                 echo "Tag is '${tag}'"
+                 if [ -z "$tag" ]; then
+                      echo "No tag: building only, no release will be created."
+                 fi
+                 echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+          # The Pico SDK and Pico-PIO-USB are provisioned on the runner, not
+          # vendored in this repository. tinyusb comes from the SDK's own
+          # lib/tinyusb, so nothing else needs fetching. Only the Fruit Jam build
+          # uses Pico-PIO-USB; the other two boards drive USB host natively.
+          #
+          # The bootloader variants are NOT built here: the pico-bootLoader repo
+          # invokes <board>-build-forbootloader.sh itself and releases those.
+          - name: Build every board variant
+            run: |
+                 chmod +x buildAll.sh release-notes.sh *-build*.sh
+                 export PICO_SDK_PATH=/datalocal/pico/pico-sdk
+                 export PICO_PIO_USB_PATH=/datalocal/Pico-PIO-USB
+                 export CMAKE_ARGS="-DDUKE_RELEASE_VERSION=${{ steps.ver.outputs.tag }}"
+                 ./buildAll.sh
+
+          - name: List release artifacts
+            run: ls -l releases/
+
+          - name: Generate release notes
+            if: steps.ver.outputs.tag != ''
+            run: |
+                 export PICO_SDK_PATH=/datalocal/pico/pico-sdk
+                 ./release-notes.sh "${{ steps.ver.outputs.tag }}"
+                 echo "----- release-notes.md -----"
+                 cat release-notes.md
+
+          # tag_name + target_commitish let the action CREATE the tag, so a
+          # workflow_dispatch run can publish a release without a tag push. (A tag
+          # pushed by a workflow using the default GITHUB_TOKEN would not trigger
+          # this workflow, so pushing one from CI is not an option.)
+          - name: Create release
+            uses: softprops/action-gh-release@v3
+            if: steps.ver.outputs.tag != ''
+            with:
+              tag_name: ${{ steps.ver.outputs.tag }}
+              target_commitish: ${{ github.sha }}
+              name: ${{ steps.ver.outputs.tag }}
+              body_path: release-notes.md
+              fail_on_unmatched_files: true
+              files: |
+                releases/*.uf2
