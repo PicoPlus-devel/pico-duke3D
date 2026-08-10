@@ -153,10 +153,16 @@ work, with all four face buttons available from the first frame.
 are two, and a pad in either behaves the same as a USB one, so the table above applies
 unchanged.
 
-A real NES controller works too: the port detects that it is a NES pad rather than a SNES
-one, so its two buttons land where any other pad's A and B do — A fires and confirms, B
-jumps and goes back. Having no shoulder buttons, it opens the menu with **SELECT+START**
-instead of L+R. Crouch and strafe are the two things it cannot reach.
+A real NES controller works too, original or aftermarket: the port works out that it is a
+NES pad rather than a SNES one, so its two buttons land where any other pad's A and B do
+— A fires and confirms, B jumps and goes back. Having no shoulder buttons, it opens the
+menu with **SELECT+START** instead of L+R. Crouch and strafe are the two things it cannot
+reach.
+
+One quirk falls out of telling the two pads apart, and only affects SNES pads in these
+sockets: if the very first button you press after switching on is **B or Y**, that one
+press acts as a NES pad's A or B (fire instead of jump). Press A once and the port knows
+what it is holding for the rest of the session.
 
 **Wii Classic pads** on the Fruit Jam and Murmulator M2: a NES Classic Mini, SNES
 Classic Mini or Wii Classic Controller (Pro), on an adapter such as the
