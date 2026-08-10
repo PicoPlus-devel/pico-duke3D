@@ -159,10 +159,24 @@ NES pad rather than a SNES one, so its two buttons land where any other pad's A 
 menu with **SELECT+START** instead of L+R. Crouch and strafe are the two things it cannot
 reach.
 
-One quirk falls out of telling the two pads apart, and only affects SNES pads in these
-sockets: if the very first button you press after switching on is **B or Y**, that one
-press acts as a NES pad's A or B (fire instead of jump). Press A once and the port knows
-what it is holding for the rest of the session.
+##### One quirk with SNES pads in these sockets
+
+**A SNES pad works in full, but its first press after switching on may be read as a NES
+pad's.** If that first press is **B** it fires instead of jumping, and if it is **Y** it
+jumps instead of using the jetpack. **Pressing A, X, L or R once settles it**, and every
+button behaves normally from then until the board is switched off. Pads in the two
+sockets are handled separately, so settling one does not settle the other. Nothing needs
+configuring, and there is no setting to get wrong.
+
+This is the price of supporting both pads in one socket with no switch to throw. The two
+share a connector and a protocol, and a NES pad announces itself only by pulling four
+wires low at the end of each read — which original Nintendo pads do, but the aftermarket
+ones do not. An aftermarket NES pad and an untouched SNES pad are therefore identical on
+the wire, and the port cannot know which it is holding until a button arrives that only
+one of them has: **A, X, L and R do not exist on a NES pad**, so the first press of any
+of them is proof. Until that proof arrives the port assumes a NES pad, because guessing
+wrong that way costs a SNES player one press, while guessing the other way leaves a NES
+player with no fire button at all.
 
 **Wii Classic pads** on the Fruit Jam and Murmulator M2: a NES Classic Mini, SNES
 Classic Mini or Wii Classic Controller (Pro), on an adapter such as the
@@ -337,6 +351,10 @@ Two things to check on the board itself:
   Wii socket and the sound chip share a connection, and some pads hold it low until they
   are initialised. This is handled automatically, but if there is still no sound, unplug
   the pad and reset to confirm.
+* If a SNES pad in a **NES/SNES socket** fires when you meant to jump, and only on the
+  first press after switching on, that is expected — press A once and it corrects itself
+  for the rest of the session. See
+  [One quirk with SNES pads](#one-quirk-with-snes-pads-in-these-sockets).
 
 ## Technical documentation
 
