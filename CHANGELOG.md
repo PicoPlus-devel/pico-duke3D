@@ -4,7 +4,43 @@ Add a section per release, headed with the tag. `release-notes.sh` extracts the
 section matching the tag being released and puts it in the GitHub release body,
 so keep the heading text exactly the tag name.
 
-## v1.0
+## v0.2
+
+A controller fix for the DE-9 sockets, and documentation for building the game
+into a finished console. Nothing about the engine, the video or the audio
+changed, so a v0.1 SD card works as it is.
+
+### Fixed
+
+- **Aftermarket and clone NES controllers now fire and jump.** Only *original*
+  Nintendo pads announce themselves on the wire, so a clone was translated as a
+  SNES pad: its A landed on jump, its B on jetpack, and it had no fire button at
+  all, with confirm and back swapped in the menus. A port now assumes NES and
+  settles on SNES the moment a button arrives that only a SNES pad has (A, X, L
+  or R), which no two-button pad can send
+
+  The one cost is a single press: a SNES pad whose *first* press is B or Y has
+  that press read as a NES pad's A or B — fire instead of jump. Any A press
+  settles the port for the rest of the session, and the two sockets settle
+  independently. See
+  [One quirk with SNES pads in these sockets](https://github.com/fhoedemakers/pico-duke3D#one-quirk-with-snes-pads-in-these-sockets)
+
+### Documentation
+
+- A **PicoNES PCB** section in the README:
+  [@johnedgarpark](https://twitter.com/johnedgarpark)'s board, which carries the
+  module and both breakouts and turns the *Adafruit DVI + SD* build into a
+  console with two controller ports and a case.
+  Parts list, what to flash, what the board does and does not give you, and
+  Gavin Knight's 3D-printed enclosure
+- Which build of that PCB runs Duke, stated up front, because only one does:
+  design v2.6, a Pimoroni Pico Plus 2, and male headers in the through-holes. A
+  Pico 2 has too little memory, and a Plus 2 cannot be soldered flat
+- The DE-9 sockets speak the SNES protocol too, so a SNES pad with a
+  SNES-to-NES adapter cable gives the full control scheme on a board whose ports
+  are NES ones. A NES pad plays the game, but has no crouch or strafe
+
+## v0.1
 
 First release of pico-duke3D: Duke Nukem 3D (Chocolate Duke3D / BUILD engine) on
 the RP2350, with `DUKE3D.GRP` streamed from the SD card.
