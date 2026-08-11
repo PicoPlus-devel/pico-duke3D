@@ -40,14 +40,135 @@ All three are tested and working on real hardware.
 | Wii Classic pad | yes | yes | — |
 | Lights | blinking LED, plus five LEDs used as a sound-level meter | blinking LED | blinking LED |
 | Also needed | — | — | the module must be a **Pimoroni Pico Plus 2** |
-| Folder on the SD card | `/emu/8/` | `/emu/13/` | `/emu/2/` |
+| Folder on the SD card, **when using [pico-bootLoader](https://github.com/fhoedemakers/pico-bootLoader)** | `/emu/8/` | `/emu/13/` | `/emu/2/` |
 
 The Adafruit DVI + SD entry is a self-built option: a Pico-shaped module on a
 breadboard or a small circuit board, with an
 [Adafruit DVI breakout](https://www.adafruit.com/product/4984) for video and a
 [MicroSD breakout](https://www.adafruit.com/product/254) for the card. The module must
 be a Pimoroni Pico Plus 2 and not a plain Pico 2, because the game needs the extra
-memory that module carries and will not start without it.
+memory that module carries and will not start without it. That circuit board also
+exists as a finished design — see [PicoNES PCB](#picones-pcb) below.
+
+## PicoNES PCB
+
+The parts above can be soldered onto a PCB instead of wired on a breadboard, which
+turns them into a finished console with two controller ports and a case. The design is
+the **PicoNES**, by [@johnedgarpark](https://twitter.com/johnedgarpark), and it carries
+the module, both breakouts and up to two NES controller ports. The current version is
+**v2.6**.
+
+<img width="480" alt="Populated PicoNES PCB with a Pico plugged into the through-holes" src="https://github.com/user-attachments/assets/2bbc846d-56b1-4528-9899-01bc9b32ce11" />
+
+Nothing about the game changes: this is the *Adafruit DVI + SD* column of the table
+above, wired neatly, so it runs the same firmware and reads the same SD card.
+
+To have one made, upload `pico_nesPCB_v2.6.zip` as it is to a PCB manufacturer —
+[PCBWay](https://www.pcbway.com/) and JLCPCB are both good options. The file is attached
+to every [pico-bootLoader release](https://github.com/fhoedemakers/pico-bootLoader/releases)
+and also lives in
+[`pico_shared/PCB`](https://github.com/fhoedemakers/pico_shared/tree/main/PCB).
+
+> [!NOTE]
+> Sellers on AliExpress have copied this design and sell pre-populated boards. For
+> questions about those, contact the seller.
+
+### Only one build of it runs Duke
+
+The PCB takes any Pico-shaped board, and two ways of mounting one. For Duke there is
+only one combination that works:
+
+**Design v2.6, a Pimoroni Pico Plus 2, and male headers plugged into the
+through-holes.**
+
+> [!IMPORTANT]
+> A Pico 2 or Pico 2 W will not run the game. Duke needs the memory that only the Pico
+> Plus 2 carries; on anything else it stops at startup and says so on the screen, as in
+> [When something goes wrong](#when-something-goes-wrong).
+
+That rules out the other mounting twice over. The Pico Plus 2 cannot lie flat against
+the PCB — the SP/CE connector on its back is in the way — so it needs the through-holes
+that arrived in v2.6 and a set of male headers; and the boards that *can* be soldered
+flat, on any design version, are the ones that cannot run Duke. If you are building this
+PCB for the game rather than for the emulators, order v2.6 and buy headers.
+
+> [!NOTE]
+> Soldering skills are required. Solder every connection from the module to the PCB,
+> including the ones on the short right-hand side of the board — those are ground.
+
+### Parts list
+
+- A [Pimoroni Pico Plus 2](https://shop.pimoroni.com/products/pimoroni-pico-plus-2?variant=42092668289107)
+  with male headers soldered on ([these](https://a.co/d/dSNPuyo) fit)
+- [Adafruit DVI Breakout Board — For HDMI Source Devices](https://www.adafruit.com/product/4984)
+- [Adafruit Micro SD SPI or SDIO Card Breakout Board — 3V ONLY!](https://www.adafruit.com/product/4682)
+- For controllers:
+  * [one or two NES controller ports](https://www.zedlabz.com/products/controller-connector-port-for-nintendo-nes-console-7-pin-90-degree-replacement-2-pack-black-zedlabz)
+  * [one or two NES controllers](https://www.amazon.com/s?k=NES+controller), or SNES
+    controllers with an adapter cable — see the note below
+- A **USB-C** OTG Y-cable if you want to use a USB gamepad — it powers the board and
+  connects the pad at the same time
+- A **USB-C** power supply
+- Optional: an on/off switch, such as
+  [this one](https://www.kiwi-electronics.com/en/spdt-slide-switch-410?search=KW-2467)
+
+The two USB items are USB-C here, while the other PicoNES documentation says micro USB.
+Both are right: that documentation also covers the Pico 2, and the Pico Plus 2 this build
+requires has a USB-C connector instead.
+
+Two NES controllers give a two-player setup; a USB pad for player 1 and a NES controller
+in either port for player 2 works just as well.
+
+> [!NOTE]
+> **A NES controller plays the game, a SNES controller plays all of it.** The ports read
+> a NES pad as a NES pad, so A fires and B jumps, and the menu opens with SELECT+START —
+> but with only two face buttons and no shoulder buttons, crouch and strafe stay out of
+> reach. The sockets speak the SNES protocol as well, so a SNES controller gives you the
+> full scheme described in [Which controllers work](#which-controllers-work). The
+> connectors differ, so a SNES pad needs a
+> [SNES-to-NES adapter cable](https://nl.aliexpress.com/item/1005007923169070.html) —
+> one per socket — or one you make yourself.
+
+<img width="480" alt="Two-player setup with NES controllers" src="https://github.com/user-attachments/assets/d40ed98f-4632-4161-986a-732d35290fac" />
+
+### What to flash
+
+`duke3d_game_adafruitdvisd.uf2` from the
+[releases page](https://github.com/fhoedemakers/pico-duke3D/releases), then `DUKE3D.GRP`
+onto the SD card in `roms/duke3d` — the same steps as [Installing](#installing).
+
+To pick Duke from the [pico-bootLoader](https://github.com/fhoedemakers/pico-bootLoader)
+menu instead, flash that project's `AdafruitDVISD` loader binary and put its build of
+Duke in `/emu/2/` on the card.
+
+### What you get on this board
+
+| | |
+|---|---|
+| Two NES controller ports | Both work, and behave exactly as [Which controllers work](#which-controllers-work) describes — including the [SNES first-press quirk](#one-quirk-with-snes-pads-in-these-sockets) |
+| USB pad or keyboard | Through the OTG Y-cable |
+| Sound | Over HDMI. The optional audio module mentioned in [Which board](#which-board) is a breadboard extra; this PCB has no place for it |
+| Lights | The onboard LED blinks while frames are being drawn. No sound-level meter — that needs the Fruit Jam's LEDs |
+| Wii Classic pads | Not on this board; there is no Wii connector in this design |
+
+### 3D printed case
+
+Gavin Knight ([DynaMight1124](https://github.com/DynaMight1124)) designed an NES-like
+enclosure for this PCB:
+[thingiverse.com/thing:6689537](https://www.thingiverse.com/thing:6689537). It has a
+base, a power-switch part and a choice of two top covers — one with a button that reaches
+the BOOT button so firmware can be updated without opening the case, one without. The
+button is worth having, since flashing means holding BOOT while plugging the board in.
+
+> [!IMPORTANT]
+> Download the **latest** top cover. Headers are required for this build, and they raise
+> the module; only the newest cover leaves room for the USB cable, as the older ones
+> assume a board soldered flat onto the PCB.
+
+<img width="480" alt="Top cover with a button for BOOT" src="https://github.com/user-attachments/assets/3c8f8990-51b9-4873-9054-64bb2cd6c300" />
+
+For the full photo gallery and assembly detail, see the
+[PCB section of the pico-infonesPlus documentation](https://github.com/fhoedemakers/pico-infonesPlus#pcb-with-raspberry-pi-pico-or-pico-2-and-pimoroni-pico-plus-2).
 
 ## Installing
 
@@ -153,10 +274,30 @@ work, with all four face buttons available from the first frame.
 are two, and a pad in either behaves the same as a USB one, so the table above applies
 unchanged.
 
-A real NES controller works too: the port detects that it is a NES pad rather than a SNES
-one, so its two buttons land where any other pad's A and B do — A fires and confirms, B
-jumps and goes back. Having no shoulder buttons, it opens the menu with **SELECT+START**
-instead of L+R. Crouch and strafe are the two things it cannot reach.
+A real NES controller works too, original or aftermarket: the port works out that it is a
+NES pad rather than a SNES one, so its two buttons land where any other pad's A and B do
+— A fires and confirms, B jumps and goes back. Having no shoulder buttons, it opens the
+menu with **SELECT+START** instead of L+R. Crouch and strafe are the two things it cannot
+reach.
+
+##### One quirk with SNES pads in these sockets
+
+**A SNES pad works in full, but its first press after switching on may be read as a NES
+pad's.** If that first press is **B** it fires instead of jumping, and if it is **Y** it
+jumps instead of using the jetpack. **Pressing A, X, L or R once settles it**, and every
+button behaves normally from then until the board is switched off. Pads in the two
+sockets are handled separately, so settling one does not settle the other. Nothing needs
+configuring, and there is no setting to get wrong.
+
+This is the price of supporting both pads in one socket with no switch to throw. The two
+share a connector and a protocol, and a NES pad announces itself only by pulling four
+wires low at the end of each read — which original Nintendo pads do, but the aftermarket
+ones do not. An aftermarket NES pad and an untouched SNES pad are therefore identical on
+the wire, and the port cannot know which it is holding until a button arrives that only
+one of them has: **A, X, L and R do not exist on a NES pad**, so the first press of any
+of them is proof. Until that proof arrives the port assumes a NES pad, because guessing
+wrong that way costs a SNES player one press, while guessing the other way leaves a NES
+player with no fire button at all.
 
 **Wii Classic pads** on the Fruit Jam and Murmulator M2: a NES Classic Mini, SNES
 Classic Mini or Wii Classic Controller (Pro), on an adapter such as the
@@ -331,6 +472,10 @@ Two things to check on the board itself:
   Wii socket and the sound chip share a connection, and some pads hold it low until they
   are initialised. This is handled automatically, but if there is still no sound, unplug
   the pad and reset to confirm.
+* If a SNES pad in a **NES/SNES socket** fires when you meant to jump, and only on the
+  first press after switching on, that is expected — press A once and it corrects itself
+  for the rest of the session. See
+  [One quirk with SNES pads](#one-quirk-with-snes-pads-in-these-sockets).
 
 ## Technical documentation
 

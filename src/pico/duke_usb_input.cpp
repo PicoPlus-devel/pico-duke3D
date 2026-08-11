@@ -16,10 +16,10 @@
 //
 //  There used to be a second, four-button "NES" layout behind a PAD LAYOUT option,
 //  because a real NES pad in a DE-9 port was translated as if its two buttons were
-//  a SNES pad's B and Y and so had no fire button here. nesToButtons() now detects
-//  the pad shape and puts them on io A and io B, which removed the reason for the
-//  option -- and with it a mode where SELECT stopped cycling weapons and which
-//  persisted silently in duke3d.cfg.
+//  a SNES pad's B and Y and so had no fire button here. padIsNes()/nesToButtons()
+//  now work out the pad shape and put them on io A and io B, which removed the
+//  reason for the option -- and with it a mode where SELECT stopped cycling
+//  weapons and which persisted silently in duke3d.cfg.
 //
 //  Retro-Go's duke3d-go arrangement (see its CONTROLS.md). Their
 //  handhelds have ten buttons and a SNES pad has eight: OPTION only duplicated
@@ -402,6 +402,7 @@ namespace
 
 #if DUKE_HAS_NESPAD
     uint32_t nesToButtons(uint16_t nes, bool is_nes);   // defined below
+    bool padIsNes(int port, uint16_t word);             // defined below
 
     // Lazy-init on first poll, then harvest the PIO read started on the
     // previous poll and immediately kick off the next one (~200 us per
@@ -465,8 +466,9 @@ namespace
         nespad_read_finish();
 #if DUKE_PAD_DIAG
         // Driver-level truth, before any translation: the raw 12-bit serial word
-        // per port and the NES/SNES verdict for each. An EMPTY port must read
-        // 0000 with nes=0 (its DATA pin is pulled up, so a disconnected socket
+        // per port, the driver's NES/SNES verdict and the one padIsNes() actually
+        // translates by (`use`), which differ for a clone NES pad. An EMPTY port
+        // must read 0000 (its DATA pin is pulled up, so a disconnected socket
         // inverts to all zeros). Anything else there is phantom input being OR-ed
         // into the merged button word, which can mask the real pad's presses.
         {
@@ -475,33 +477,76 @@ namespace
             {
                 p0 = nespad_states_ext[0];
                 p1 = nespad_states_ext[1];
-                printf("nespad: port0=%04x nes=%d  port1=%04x nes=%d\n",
-                       p0, nespad_is_nes[0] ? 1 : 0,
-                       p1, nespad_is_nes[1] ? 1 : 0);
+                printf("nespad: port0=%04x nes=%d use=%d  port1=%04x nes=%d use=%d\n",
+                       p0, nespad_is_nes[0] ? 1 : 0, padIsNes(0, p0) ? 1 : 0,
+                       p1, nespad_is_nes[1] ? 1 : 0, padIsNes(1, p1) ? 1 : 0);
             }
         }
 #endif
         // Translated per port BEFORE the merge, because the two ports can hold
-        // different pad shapes and nespad_is_nes[] is per port. Merging the raw
-        // words first would lose that.
-        last = nesToButtons(nespad_states_ext[0], nespad_is_nes[0])
-             | nesToButtons(nespad_states_ext[1], nespad_is_nes[1]);
+        // different pad shapes and the verdict is per port. Merging the raw words
+        // first would lose that.
+        last = nesToButtons(nespad_states_ext[0], padIsNes(0, nespad_states_ext[0]))
+             | nesToButtons(nespad_states_ext[1], padIsNes(1, nespad_states_ext[1]));
         nespad_read_start();
         return last;
+    }
+
+    // Which shape to translate a port's serial word as -- the answer nesToButtons()
+    // needs, and NOT simply nespad_is_nes[].
+    //
+    // nespad_is_nes[] is a *positive* identification of an original NES pad and
+    // nothing more. It is true when clocks 9-16 all read low, which an original
+    // pad guarantees because its 4021's serial input is grounded. Aftermarket and
+    // clone NES pads idle that line high instead, so they reach here reporting
+    // nes=0 -- bit for bit indistinguishable from a SNES pad with nothing pressed.
+    // Measured on such a pad: A -> word 0x0001, B -> 0x0002, nes=0 throughout,
+    // and bits 8-11 dead. Translated as a SNES pad (as this used to) its A lands on
+    // io B and its B on io Y: no fire button, confirm/back swapped in menus.
+    // pico-doom never hit this because it maps bit 0 to fire for both shapes at
+    // once and asks no question; Duke's four-button layout cannot do that without
+    // giving a SNES pad two fire buttons and no crouch or jetpack.
+    //
+    // There is no static discriminator -- both pads really do put out the same 16
+    // bits -- but there is a decisive dynamic one: bits 8-11 are SNES A, X, L and
+    // R, and a pad with only two buttons can never set them. So assume NES, and
+    // latch SNES for good the moment a port proves it is one. False positives are
+    // impossible in that direction; an empty port reads 0x0000 and can never latch.
+    //
+    // Cost, and it is the whole cost: a genuine SNES pad whose FIRST press is B or
+    // Y (before any A, X, L or R) has that one press read as a NES pad's A or B --
+    // fire instead of jump. The next A press corrects it permanently. Weigh that
+    // against a clone NES pad having no fire button at all.
+    //
+    // The latch is per port and lives until reboot, except that a positive NES ID
+    // clears it, so swapping a SNES pad for an original NES one needs no reboot.
+    // The reverse (SNES pad, then a clone in the same port) does need one: an
+    // unplugged port is indistinguishable from an idle one, so there is no hotplug
+    // edge to reset on, and a timeout would re-arm the first-press cost above every
+    // time a player let go of the pad for a few seconds.
+    bool padIsNes(int port, uint16_t word)
+    {
+        static bool snes_latched[2] = {false, false};
+        if (nespad_is_nes[port])
+        {
+            snes_latched[port] = false;
+            return true;
+        }
+        if (word & 0x0F00)          // SNES A, X, L or R -- settled, permanently
+            snes_latched[port] = true;
+        return !snes_latched[port];
     }
 
     // nespad_states_ext is in SNES serial order; translate it into the same
     // io::GamePadState::Button bits the USB pads produce, so a pad in a DE-9 port
     // behaves EXACTLY like the USB pad with the same buttons on it.
     //
-    // is_nes comes from nespad_is_nes[] and is the whole trick. A NES pad shifts
-    // out only 8 buttons, so its A and B land in the SNES *serial* positions B and
-    // Y -- i.e. exactly where a SNES pad's B and Y are. Translated as a SNES pad
-    // it would come out with its A on io B and its B on io Y, where every layout
-    // reads them as jump and jetpack: no fire, and confirm/back swapped in menus.
-    // The driver already distinguishes the two shapes from the 4 ID bits, so put a
-    // real NES pad's buttons on io A and io B, where an ordinary two-button pad
-    // has them. It then needs no special handling anywhere else.
+    // is_nes comes from padIsNes() above -- read its notes before touching this.
+    // A NES pad shifts out only 8 buttons, so its A and B land in the SNES *serial*
+    // positions B and Y -- i.e. exactly where a SNES pad's B and Y are. Knowing the
+    // shape is what lets a real NES pad's buttons go on io A and io B, where an
+    // ordinary two-button pad has them. It then needs no special handling anywhere
+    // else.
     uint32_t nesToButtons(uint16_t nes, bool is_nes)
     {
         using Button = io::GamePadState::Button;

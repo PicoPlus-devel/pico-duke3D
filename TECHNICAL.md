@@ -291,15 +291,31 @@ SNES pad, a real NES controller therefore came out with its A on `io B` and its 
 swapped in menus.
 
 The fix is at the source. `nespad_decode()` in the vendored driver **already
-distinguishes the two shapes** — a NES pad leaves clocks 13-16 high, while a SNES pad
-drives those 4 ID bits so it can never set all four — and then strips the ID bits and
-discards the verdict. A local addition (`nespad_is_nes[2]`, same pattern as
-`nespad_read_ready()`) publishes it, and `nesToButtons(nes, is_nes)` puts a detected NES
-pad's two buttons on `io A` and `io B`, where an ordinary two-button pad has them.
+distinguishes the two shapes** — an original NES pad leaves clocks 13-16 low, while a
+SNES pad drives those 4 ID bits high so it can never set all four — and then strips the
+ID bits and discards the verdict. A local addition (`nespad_is_nes[2]`, same pattern as
+`nespad_read_ready()`) publishes it, and `nesToButtons(nes, is_nes)` puts a NES pad's
+two buttons on `io A` and `io B`, where an ordinary two-button pad has them.
+
+**`nespad_is_nes[]` is a positive ID of an *original* NES pad, not a pad-shape oracle.**
+It relies on the 4021's serial input being grounded. Aftermarket and clone NES pads idle
+that line high, so they report `nes=0` and are bit-for-bit indistinguishable from a SNES
+pad with nothing pressed (measured: A → `0x0001`, B → `0x0002`, `nes=0`, bits 8-11 dead).
+No static test can separate them. `padIsNes()` therefore adds the one *dynamic*
+discriminator that has no false positives: bits 8-11 are SNES A, X, L and R, and a
+two-button pad can never set them, so a port is assumed NES and **latches SNES for good**
+the first time it sets one. The price is one press: a genuine SNES pad whose first press
+is B or Y — before any A, X, L or R — has that press read as a NES A or B. The latch is
+per port and lives until reboot, except that a positive NES ID clears it.
+
+Sister ports are immune for reasons Duke cannot copy: pico-infonesPlus feeds bits 0-7
+straight into a NES emulator where bit 0 *is* A, and pico-doom maps bit 0 to fire for
+*both* shapes at once and never asks. Duke's four-button layout cannot do the latter
+without giving a SNES pad two fire buttons and no crouch or jetpack.
 
 `nesButtons()` returns `io` bits rather than the raw serial word, and translates **each
-port separately before merging**, because `nespad_is_nes[]` is per port and the two
-sockets can hold different pad shapes.
+port separately before merging**, because the verdict is per port and the two sockets can
+hold different pad shapes.
 
 That one rule is what let a large amount of machinery be deleted:
 
