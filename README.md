@@ -104,7 +104,8 @@ PCB for the game rather than for the emulators, order v2.6 and buy headers.
 - [Adafruit Micro SD SPI or SDIO Card Breakout Board — 3V ONLY!](https://www.adafruit.com/product/4682)
 - For controllers:
   * [one or two NES controller ports](https://www.zedlabz.com/products/controller-connector-port-for-nintendo-nes-console-7-pin-90-degree-replacement-2-pack-black-zedlabz)
-  * [one or two NES controllers](https://www.amazon.com/s?k=NES+controller)
+  * [one or two NES controllers](https://www.amazon.com/s?k=NES+controller), or SNES
+    controllers with an adapter cable — see the note below
 - A **USB-C** OTG Y-cable if you want to use a USB gamepad — it powers the board and
   connects the pad at the same time
 - A **USB-C** power supply
@@ -117,6 +118,16 @@ requires has a USB-C connector instead.
 
 Two NES controllers give a two-player setup; a USB pad for player 1 and a NES controller
 in either port for player 2 works just as well.
+
+> [!NOTE]
+> **A NES controller plays the game, a SNES controller plays all of it.** The ports read
+> a NES pad as a NES pad, so A fires and B jumps, and the menu opens with SELECT+START —
+> but with only two face buttons and no shoulder buttons, crouch and strafe stay out of
+> reach. The sockets speak the SNES protocol as well, so a SNES controller gives you the
+> full scheme described in [Which controllers work](#which-controllers-work). The
+> connectors differ, so a SNES pad needs a
+> [SNES-to-NES adapter cable](https://nl.aliexpress.com/item/1005007923169070.html) —
+> one per socket — or one you make yourself.
 
 <img width="480" alt="Two-player setup with NES controllers" src="https://github.com/user-attachments/assets/d40ed98f-4632-4161-986a-732d35290fac" />
 
