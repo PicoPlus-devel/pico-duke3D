@@ -125,9 +125,7 @@ in either port for player 2 works just as well.
 > but with only two face buttons and no shoulder buttons, crouch and strafe stay out of
 > reach. The sockets speak the SNES protocol as well, so a SNES controller gives you the
 > full scheme described in [Which controllers work](#which-controllers-work). The
-> connectors differ, so a SNES pad needs a
-> [SNES-to-NES adapter cable](https://nl.aliexpress.com/item/1005007923169070.html) —
-> one per socket — [or one you make yourself](http://www.neshq.com/hardmods/snes_to_nes_controller.txt).
+> connectors differ, o a SNES pad needs a [SNES-to-NES adapter cable you make yourself](https://github.com/fhoedemakers/pico-snesPlus/blob/main/snestonescontroller.md) — one per socket. There also are ready made cables, but hard to find at the moment. Some ready made cables simply don't work as expected.
 
 <img width="480" alt="Two-player setup with NES controllers" src="https://github.com/user-attachments/assets/d40ed98f-4632-4161-986a-732d35290fac" />
 
