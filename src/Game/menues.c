@@ -247,6 +247,12 @@ int duke_menu_is_active(void)
 {
     return (ps[myconnectindex].gm & (MODE_MENU|MODE_TYPE)) != 0;
 }
+
+// The OPTIONS menu's "BOOTSEL MODE" row. Defined in src/pico/duke_boot.c; this
+// library is built with only src/pico/shim on its include path, so the header
+// cannot be included from here -- declare it, as the pad layer does in the
+// other direction for duke_menu_is_active() above.
+void __attribute__((noreturn)) duke_reboot_to_bootsel(void);
 #endif
 
 int loadplayer(int8_t spot)
@@ -2482,7 +2488,11 @@ else
 
             c = (320>>1)-120;
 
+#ifdef PLATFORM_PICO
+            x = probe(c+6,43,16,7); // one extra row: BOOTSEL MODE
+#else
             x = probe(c+6,43,16,6);
+#endif
 
             if(x == -1)
                 { if(ps[myconnectindex].gm&MODE_GAME) cmenu(50);else cmenu(0); }
@@ -2526,6 +2536,18 @@ else
                     ud.m_recstat = !ud.m_recstat;
                     break;
 
+#ifdef PLATFORM_PICO
+                case 6: // reset into the ROM bootloader, i.e. the UF2 drive
+                    // Nothing else on this path writes the config: the board
+                    // resets the moment the row is picked, so the usual
+                    // gameexit() -> Shutdown() -> ShutDown() -> CONFIG_WriteSetup()
+                    // chain never runs. Without this the player loses whatever
+                    // they just changed in the very menu they are standing in.
+                    CONFIG_WriteSetup();
+                    duke_reboot_to_bootsel(); // does not return
+                    break;
+#endif
+
 				//case -7:
 				//	gametext(320>>1,43+16*6,"*** DISABLED. WILL BE FIXED SOON***",0,2+8+16); // center-i
 				//	break;
@@ -2555,6 +2577,19 @@ else
                     menutext(c+160+40,43+16+16+16+16+16,SHX(-10),PHX(-10),"ON");
                 else menutext(c+160+40,43+16+16+16+16+16,SHX(-10),PHX(-10),"OFF");
             }
+
+#ifdef PLATFORM_PICO
+            // An action, not a toggle, so label only -- no value in the second
+            // column (same as PARENTAL LOCK on the GAME OPTIONS page). Last on
+            // purpose: it resets the board the moment it is picked, with no "are
+            // you sure", so it wants to be the hardest row to land on by accident.
+            menutext(c,43+16*6,SHX(-12),PHX(-12),"BOOTSEL MODE");
+
+            // probe() returns -probey-2 while idling on a row, so -8 is row 6.
+            // With no confirmation page, this line is the only warning there is.
+            if(x == -8)
+                gametext(320>>1,43+16*7+4,"*** RESETS THE BOARD FOR REFLASHING ***",0,2+8+16);
+#endif
 
             break;
 

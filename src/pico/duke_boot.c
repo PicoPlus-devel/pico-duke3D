@@ -10,6 +10,7 @@
 #include <stdio.h>
 
 #include "pico/stdlib.h"
+#include "pico/bootrom.h"
 #include "hardware/clocks.h"
 #include "hardware/pll.h"
 #include "hardware/vreg.h"
@@ -17,6 +18,7 @@
 #include "hardware/watchdog.h"
 #include "hardware/structs/qmi.h"
 
+#include "duke_boot.h"
 #include "duke_dostext.h"
 #include "duke_fatal.h"
 #include "duke_leds.h"
@@ -195,6 +197,35 @@ void __attribute__((noreturn)) _exit(int status)
     while (1) {
         tight_loop_contents();
     }
+}
+
+// ---------------------------------------------------------------------------
+// The OPTIONS menu's "BOOTSEL MODE" item (menues.c, menu 200). Unlike the reset
+// above this is not an exit path: it is entered straight from the menu with the
+// game still running, so nothing here has been torn down and nothing will be.
+// That is fine — a chip reset needs no DMA stop, no HSTX teardown, no audio
+// stop, no SD unmount and no core1 hand-off. Only state that OUTLIVES the reset
+// has to be dealt with, which is the two lines below. The config write does not
+// happen here: the menu does it before calling (this file pulls in no engine
+// headers). See duke_boot.h for how this differs from _exit()'s destination.
+// ---------------------------------------------------------------------------
+void __attribute__((noreturn)) duke_reboot_to_bootsel(void)
+{
+    printf("\nduke3d: bootsel\n");
+    stdio_flush();
+
+    // Same reason as in _exit(): the reset clears the PIO but not the pixels'
+    // latched colours, so the VU meter would otherwise stay lit through the
+    // whole BOOTSEL session.
+    duke_leds_off();
+    duke_wiipad_shutdown(); // see _exit()
+
+    // Into the ROM bootloader, i.e. the RP2350 UF2 drive — not the resident
+    // pico-bootLoader picker that a normal quit goes back to. Both arguments
+    // zero: no activity-LED GPIO, and leave both USB MSD and PICOBOOT enabled.
+    // pico_bootrom comes in transitively via hardware_watchdog, so this needs
+    // no CMake change.
+    reset_usb_boot(0, 0);
 }
 
 int main(void)

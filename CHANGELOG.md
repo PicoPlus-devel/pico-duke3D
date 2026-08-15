@@ -4,6 +4,18 @@ Add a section per release, headed with the tag. `release-notes.sh` extracts the
 section matching the tag being released and puts it in the GitHub release body,
 so keep the heading text exactly the tag name.
 
+## v0.3
+
+### Added
+
+- **A `BOOTSEL MODE` item at the bottom of the OPTIONS menu.** It restarts the
+  board as the USB firmware drive, so it can be reflashed without holding
+  **BOOT** while replugging it — which is awkward once the board is in a case.
+  Settings are written to the card on the way out, so a change made in the menu
+  just before is kept. There is no confirmation: the item sits last, furthest
+  from where the cursor starts, with a warning line under it. See
+  [Bootsel mode](https://github.com/fhoedemakers/pico-duke3D#bootsel-mode)
+
 ## v0.2
 
 A controller fix for the DE-9 sockets, and documentation for building the game

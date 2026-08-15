@@ -31,6 +31,9 @@ OUT=release-notes.md
     echo "drive. The game data is **not** in these files -- it streams from the SD card,"
     echo "so there is nothing else to flash."
     echo
+    echo "If the board is already running Duke, **OPTIONS -> BOOTSEL MODE** brings that"
+    echo "drive back without holding the button or unplugging anything."
+    echo
     echo "| Board | \`HW_CONFIG\` | Firmware |"
     echo "|---|---|---|"
 } >> "$OUT"

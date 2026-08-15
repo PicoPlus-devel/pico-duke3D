@@ -173,7 +173,8 @@ For the full photo gallery and assembly detail, see the
 1. Download the file for your board from the
    [releases page](https://github.com/fhoedemakers/pico-duke3D/releases).
 2. Hold the **BOOT** button on the board while connecting it to a computer. It appears
-   as a USB drive.
+   as a USB drive. (Once the game is on there, **OPTIONS → [BOOTSEL MODE](#bootsel-mode)**
+   brings that drive back without unplugging anything.)
 3. Copy the downloaded file onto that drive. The board restarts into the game.
 4. Copy `DUKE3D.GRP` onto the SD card in a folder named `roms/duke3d`, and insert the
    card.
@@ -431,6 +432,23 @@ Two things to note. The game pauses briefly while the file is written, though th
 continues. And the image will look slightly tall in a viewer, because the pixels are not
 square: a viewer that takes the 320×200 size literally will stretch the 4:3 picture seen
 on the screen.
+
+## Bootsel mode
+
+**OPTIONS → BOOTSEL MODE** restarts the board as the USB drive you flash firmware onto,
+without holding **BOOT** while replugging it. Handy once the board is in a case, where
+that button can be hard to reach, or awkward to hold while plugging in a cable.
+
+It takes effect immediately — there is no *are you sure?*. That is why it sits at the
+bottom of the list, furthest from where the cursor starts, with a warning line under it.
+It is **not** *Quit Game*: quitting restarts Duke, or returns to the pico-bootLoader menu
+if you use that. This one goes to the firmware drive, and only a computer gets you out of
+it again.
+
+Settings are written to the SD card on the way out, so anything you changed in the menu
+first is kept. A game in progress is not saved — save it before using this.
+
+To leave, copy a `.uf2` onto the drive, or just unplug and power the board back on.
 
 ## When something goes wrong
 
