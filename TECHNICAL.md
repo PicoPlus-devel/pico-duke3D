@@ -157,8 +157,7 @@ to it — so the whole partition goes to the app on every board. Only the 4 MB b
 need the totals overridden (`-DDUKE_APP_SIZE` / `-DDUKE_FLASH_TOTAL` in their scripts);
 the other two match the defaults in `cmake/BootPartition.cmake`. On the Olimex board
 the app size also stops short of the last 260 KB of flash, which hold pico-launcher,
-so the linker refuses an image that would overwrite it. The pico-bootLoader does not
-build for `HW_CONFIG 15` yet; the bootloader variant is ready for when it does.
+so the linker refuses an image that would overwrite it.
 
 Useful options:
 

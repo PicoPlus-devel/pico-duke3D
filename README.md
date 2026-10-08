@@ -40,7 +40,7 @@ All four are tested and working on real hardware.
 | Wii Classic pad | yes | yes | — | — |
 | Lights | blinking LED, plus five LEDs used as a sound-level meter | blinking LED | blinking LED | blinking LED |
 | Also needed | — | — | the module must be a **Pimoroni Pico Plus 2** | a Pico 2 with a **PSRAM chip fitted on GPIO 8** |
-| Folder on the SD card, **when using [pico-bootLoader](https://github.com/fhoedemakers/pico-bootLoader)** | `/emu/8/` | `/emu/13/` | `/emu/2/` | not yet supported by the bootloader |
+| Folder on the SD card, **when using [pico-bootLoader](https://github.com/fhoedemakers/pico-bootLoader)** | `/emu/8/` | `/emu/13/` | `/emu/2/` | `/emu/15/` |
 
 The Adafruit DVI + SD entry is a self-built option: a Pico-shaped module on a
 breadboard or a small circuit board, with an
