@@ -94,6 +94,11 @@ fi
     echo "  only exists on the B. Its HSTX lanes are the only ones here that are *not*"
     echo "  inverted, so a garbled or absent picture points at \`GPIOHSTXINVERTED\` first."
     echo "  USB host is native, as on the Murmulator."
+    echo "* **Olimex RP2040-PICO-PC + Pico 2** -- a stock Pico 2 has no PSRAM, so a PSRAM"
+    echo "  chip has to be fitted on GPIO 8 before Duke will start. Sound plays on HDMI and"
+    echo "  the board's audio jack at the same time (no I2S DAC). USB host is native, on"
+    echo "  the board's USB-A socket; one NES/SNES pad works on the UEXT connector. There is"
+    echo "  no serial console (GP0/1 are the PS/2 port, which is not used)."
     echo
     echo "### Controls"
     echo
