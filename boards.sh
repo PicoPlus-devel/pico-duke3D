@@ -9,7 +9,7 @@
 # invokes those scripts itself and puts the result on the SD card under
 # /emu/<HW_CONFIG>/.
 
-RELEASE_BOARDS="fruitjam murmulatorm2 adafruitdvisd"
+RELEASE_BOARDS="fruitjam murmulatorm2 adafruitdvisd olimexpicopc"
 
 # Human-readable name, for the release notes.
 board_name() {
@@ -17,6 +17,7 @@ board_name() {
         fruitjam)      echo "Adafruit Fruit Jam" ;;
         murmulatorm2)  echo "Murmulator M2 (RP2350)" ;;
         adafruitdvisd) echo "Pico Plus 2 + Adafruit DVI + SD breakouts" ;;
+        olimexpicopc)  echo "Olimex RP2040-PICO-PC + Pico 2" ;;
         *)             echo "$1" ;;
     esac
 }
@@ -28,6 +29,7 @@ board_hwconfig() {
         fruitjam)      echo 8 ;;
         murmulatorm2)  echo 13 ;;
         adafruitdvisd) echo 2 ;;
+        olimexpicopc)  echo 15 ;;
         *)             echo "?" ;;
     esac
 }
@@ -43,11 +45,12 @@ board_needs_pio_usb() {
 }
 
 # Caveat for the release notes, empty when there is none. Keep in step with the
-# "Which board" table in README.md and "Status" in TECHNICAL.md: all three boards are
+# "Which board" table in README.md and "Status" in TECHNICAL.md: all four boards are
 # now hardware-verified, so only genuine hardware requirements are left here.
 board_note() {
     case "$1" in
         adafruitdvisd) echo "needs a Pimoroni Pico Plus 2" ;;
+        olimexpicopc)  echo "needs PSRAM fitted on GPIO 8" ;;
         *)             echo "" ;;
     esac
 }

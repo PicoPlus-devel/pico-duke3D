@@ -1,6 +1,6 @@
 # pico-duke3D
 
-A port of Duke Nukem 3D to three small RP2350 hobby boards. Output is HDMI, input is
+A port of Duke Nukem 3D to four small RP2350 hobby boards. Output is HDMI, input is
 a USB gamepad or keyboard, and the game data comes off an SD card.
 
 The game data stays on the card, so switching between the shareware episode and the
@@ -20,7 +20,7 @@ full Atomic Edition means replacing one file.
 
 ## What you need
 
-- One of the three [boards](#which-board) below
+- One of the four [boards](#which-board) below
 - A micro SD card, formatted FAT or exFAT
 - `DUKE3D.GRP` — the game's data file. The shareware version works, as does the one
   from the registered or Atomic Edition.
@@ -29,18 +29,18 @@ full Atomic Edition means replacing one file.
 
 ## Which board
 
-All three are tested and working on real hardware.
+All four are tested and working on real hardware.
 
-| | Fruit Jam | Murmulator M2 | Adafruit DVI + SD |
-|---|---|---|---|
-| Video | HDMI 640×480 | same | same |
-| Sound | headphones **or** HDMI — switches when you plug in | headphones and HDMI at once | headphones (optional module) and HDMI at once |
-| USB pad / keyboard | plug straight in | needs an OTG adapter | needs an OTG adapter |
-| NES/SNES controller ports | — | two | two |
-| Wii Classic pad | yes | yes | — |
-| Lights | blinking LED, plus five LEDs used as a sound-level meter | blinking LED | blinking LED |
-| Also needed | — | — | the module must be a **Pimoroni Pico Plus 2** |
-| Folder on the SD card, **when using [pico-bootLoader](https://github.com/fhoedemakers/pico-bootLoader)** | `/emu/8/` | `/emu/13/` | `/emu/2/` |
+| | Fruit Jam | Murmulator M2 | Adafruit DVI + SD | Olimex RP2040-PICO-PC |
+|---|---|---|---|---|
+| Video | HDMI 640×480 | same | same | same |
+| Sound | headphones **or** HDMI — switches when you plug in | headphones and HDMI at once | headphones (optional module) and HDMI at once | audio jack and HDMI at once |
+| USB pad / keyboard | plug straight in | needs an OTG adapter | needs an OTG adapter | plug straight into the USB-A socket |
+| NES/SNES controller ports | — | two | two | one, on the UEXT connector |
+| Wii Classic pad | yes | yes | — | — |
+| Lights | blinking LED, plus five LEDs used as a sound-level meter | blinking LED | blinking LED | blinking LED |
+| Also needed | — | — | the module must be a **Pimoroni Pico Plus 2** | a Pico 2 with a **PSRAM chip fitted on GPIO 8** |
+| Folder on the SD card, **when using [pico-bootLoader](https://github.com/fhoedemakers/pico-bootLoader)** | `/emu/8/` | `/emu/13/` | `/emu/2/` | not yet supported by the bootloader |
 
 The Adafruit DVI + SD entry is a self-built option: a Pico-shaped module on a
 breadboard or a small circuit board, with an
@@ -49,6 +49,11 @@ breadboard or a small circuit board, with an
 be a Pimoroni Pico Plus 2 and not a plain Pico 2, because the game needs the extra
 memory that module carries and will not start without it. That circuit board also
 exists as a finished design — see [PicoNES PCB](#picones-pcb) below.
+
+The Olimex RP2040-PICO-PC is used here with a Raspberry Pi Pico 2 in place of the
+original Pico. A stock Pico 2 has no PSRAM, which the game needs, so a PSRAM chip must
+be fitted to it (chip select on GPIO 8); without it the game reports this on screen and
+stops. The board's PS/2 keyboard port is not used.
 
 ## PicoNES PCB
 
@@ -269,9 +274,10 @@ detected afterwards.
 The inexpensive SNES pads sold in a NES-shaped shell (sometimes as "MantaPad") also
 work, with all four face buttons available from the first frame.
 
-**The NES/SNES controller sockets** on the Murmulator M2 and Adafruit DVI + SD. There
-are two, and a pad in either behaves the same as a USB one, so the table above applies
-unchanged.
+**The NES/SNES controller sockets** on the Murmulator M2 and Adafruit DVI + SD, and the
+UEXT connector of the Olimex RP2040-PICO-PC. The first two boards have two sockets, the
+Olimex board one, and a pad in any of them behaves the same as a USB one, so the table
+above applies unchanged.
 
 A real NES controller works too, original or aftermarket: the port works out that it is a
 NES pad rather than a SNES one, so its two buttons land where any other pad's A and B do

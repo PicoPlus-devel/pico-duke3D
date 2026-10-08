@@ -208,6 +208,9 @@ target_link_libraries(duke3d_game PRIVATE
     # shared-bus clear that duke_wiipad.cpp (and now the codec) needs.
     pico_shared_wiipad
     i2c_bus_recovery
+    # PWM audio jack, fed from duke_audio.c's HDMI push. A no-op unless the
+    # board header sets PWM_AUDIO_PIN_L >= 0 (Olimex RP2040-PICO-PC).
+    pico_shared_pwm_audio
 )
 
 # USB host transport (see the ENABLE_PIO_USB block in the root CMakeLists).

@@ -23,6 +23,10 @@
 //  there is nothing to switch on, so both sinks get the real samples and the
 //  user picks with their cables.
 //
+//  A board with no I2S DAC at all (Olimex RP2040-PICO-PC) plays over HDMI and
+//  its PWM audio jack: every HDMI sample is also handed to pwm_audio, which
+//  therefore runs at the HDMI pace.
+//
 //  DisableInterrupts/RestoreInterrupts (no-ops in the SDL build's dsl.c) are
 //  implemented as real IRQ save/disable here: they are what protects the
 //  multivoc voice list from the timer-IRQ pump on core0.
@@ -41,6 +45,7 @@
 #include "hstx_packet.h"              // pico_hdmi data-island audio
 #include "hstx_data_island_queue.h"
 #include "duke_leds.h"                // duke_vu_add_chunk (stubs out with no strip)
+#include "pwm_audio.h"                // pico_shared PWM audio jack (no-op stubs without one)
 
 #include "../Game/audiolib/dsl.h"
 
@@ -55,6 +60,10 @@
 #ifndef DUKE_AUDIO_I2S_DRIVER
 #define DUKE_AUDIO_I2S_DRIVER PICO_AUDIO_I2S_DRIVER_TLV320
 #endif
+
+// Driver 0 (PICO_AUDIO_I2S_DRIVER_NONE): no DAC to set up. s_i2s_ok then stays
+// false, which already keeps every I2S path below quiet.
+#define DUKE_AUDIO_HAS_I2S (DUKE_AUDIO_I2S_DRIVER != PICO_AUDIO_I2S_DRIVER_NONE)
 
 // Can this board tell where the listener is? Only a TLV320 with its
 // headset-detect interrupt wired can, and only then is it right to mute one
@@ -95,6 +104,7 @@ static volatile bool s_playing = false;
 // ---------------------------------------------------------------------------
 static void __not_in_flash_func(hstx_push_audio_sample)(int left, int right)
 {
+    pwm_audio_push(left, right);  // the PWM audio jack plays the same samples (no-op without one)
     static int frame_counter = 0;
     static audio_sample_t acc_buf[4];
     static int acc_count = 0;
@@ -490,6 +500,7 @@ char *DSL_ErrorString(int ErrorNumber)
 
 int DSL_Init(void)
 {
+#if DUKE_AUDIO_HAS_I2S
     // DAC + I2S bring-up (for a TLV320: i2c, codec regs incl. headset detect;
     // for a bare PCM5100A just the PIO SM). DMA chan 6 -> DMA_IRQ_1, leaving
     // DMA_IRQ_0 for HSTX. The driver id comes from the board's cflags header.
@@ -505,9 +516,17 @@ int DSL_Init(void)
         printf("audio: I2S setup FAILED (driver %d) — HDMI only\n",
                DUKE_AUDIO_I2S_DRIVER);
     }
+#endif
+    // PWM audio jack (Olimex RP2040-PICO-PC), a no-op on boards without one.
+    // On core0, after the clocks are final: the PWM wrap is derived from
+    // clk_sys and its interrupt runs on the core that calls this, while the
+    // samples arrive from the core1 pump.
+    pwm_audio_init(DUKE_AUDIO_RATE);
     printf("audio: DSL_Init ok (%d Hz, sinks=%s)\n", DUKE_AUDIO_RATE,
            DUKE_AUDIO_EXCLUSIVE_SINK ? "HDMI or headphones (jack detect)"
-                                     : "HDMI + I2S");
+           : DUKE_AUDIO_HAS_I2S      ? "HDMI + I2S"
+           : PWM_AUDIO_IS_ENABLED    ? "HDMI + PWM jack"
+                                     : "HDMI");
     return DSL_Ok;
 }
 

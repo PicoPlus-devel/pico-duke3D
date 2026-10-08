@@ -219,6 +219,10 @@ endif()
 # and the board header that defines those pins is force-included above, so a
 # board without a connector compiles it away to an empty object.
 add_subdirectory(3rdparty/pico_shared_drivers/wiipad)
+# PWM audio jack (Olimex RP2040-PICO-PC). Unconditional for the same reason:
+# pwm_audio.c is wrapped in #if PWM_AUDIO_PIN_L >= 0, and a board header that
+# leaves PWM_AUDIO_PIN_L undefined gets the header's inline no-op stubs.
+add_subdirectory(3rdparty/pico_shared_drivers/pwm_audio)
 
 # Duke3D BUILD engine + game logic (static lib; platform layer + link in src/pico).
 include(cmake/duke_engine.cmake)

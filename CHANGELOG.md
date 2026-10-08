@@ -4,6 +4,16 @@ Add a section per release, headed with the tag. `release-notes.sh` extracts the
 section matching the tag being released and puts it in the GitHub release body,
 so keep the heading text exactly the tag name.
 
+## v0.4
+
+### Added
+
+- **Olimex RP2040-PICO-PC with a Raspberry Pi Pico 2** is now supported
+  (`duke3d_game_olimexpicopc.uf2`). Picture and sound over HDMI, sound on the
+  board's audio jack at the same time, USB keyboard, mouse and gamepads on the
+  USB-A socket, and a NES/SNES pad on the UEXT connector. Duke needs a PSRAM
+  chip fitted to the Pico 2 (GPIO 8).
+
 ## v0.3
 
 ### Added

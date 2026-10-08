@@ -16,8 +16,9 @@ wrong thing. For installing and playing, see [README.md](README.md).
 ## What it is
 
 Duke Nukem 3D (Chocolate Duke3D / BUILD engine) ported to the RP2350, for the
-**Adafruit Fruit Jam** (`HW_CONFIG 8`), the **Murmulator M2** (`HW_CONFIG 13`) and
-**Adafruit DVI + SD breakout boards** (`HW_CONFIG 2`). Built on the same skeleton as
+**Adafruit Fruit Jam** (`HW_CONFIG 8`), the **Murmulator M2** (`HW_CONFIG 13`),
+**Adafruit DVI + SD breakout boards** (`HW_CONFIG 2`) and the **Olimex
+RP2040-PICO-PC with a Pico 2** (`HW_CONFIG 15`). Built on the same skeleton as
 Frank's `fruitjam-doom` port, reusing his `pico_shared` driver library.
 
 `DUKE3D.GRP` is **streamed from the SD card** via BUILD's `cache1d` — it does not fit
@@ -26,7 +27,7 @@ in the 8 MB PSRAM, which instead holds the tile cache and the engine's map array
 
 ## Status
 
-Playable, with sound and music, and **hardware-verified on all three boards**. What was
+Playable, with sound and music, and **hardware-verified on all four boards**. What was
 verified on the Fruit Jam:
 
 - **378 MHz @ 1.50 V**, `clk_hstx` a fixed 126 MHz from a retasked PLL_USB.
@@ -40,10 +41,10 @@ verified on the Fruit Jam:
   live from the first line of boot, with fatal errors reported on it.
 - Bootloader variant, quit-to-picker, save/load and settings persistence.
 
-The **Murmulator M2** and **Adafruit DVI + SD** builds are hardware-verified too. They
-differ from the Fruit Jam in the clock source for `clk_hstx`, the audio DAC and routing,
-the USB host controller, and the HSTX lane inversion — see [Boards](#boards) for the
-whole list.
+The **Murmulator M2**, **Adafruit DVI + SD** and **Olimex RP2040-PICO-PC** builds are
+hardware-verified too. They differ from the Fruit Jam in the clock source for
+`clk_hstx`, the audio DAC and routing, the USB host controller, and the HSTX lane
+inversion — see [Boards](#boards) for the whole list.
 
 ## Boards
 
@@ -51,22 +52,22 @@ The board is chosen at configure time by `DUKE_BOARD`, which force-includes
 `<tag>_cflags.h` into every translation unit. Everything the C code branches on lives
 in that one header.
 
-| | Fruit Jam (`fruitjam`) | Murmulator M2 (`murmulatorm2`) | Adafruit DVI + SD (`adafruitdvisd`) |
-|---|---|---|---|
-| `HW_CONFIG` | 8 | 13 | 2 |
-| `PICO_BOARD` | `adafruit_fruit_jam` | `pico2` | `pimoroni_pico_plus2_rp2350` |
-| Flash | 16 MB | 4 MB | 16 MB |
-| Video | HSTX 640×480p60, lanes 13/15/17/19 **inverted** | same | lanes **12/14/16/18, not inverted** |
-| `clk_hstx` | 126 MHz from a **retasked PLL_USB** (jitter-free) | 126 MHz **from `clk_sys`** (378/3) — PLL_USB is spoken for | same as the M2 |
-| Audio DAC | TLV320DAC3100 + headphone detect | PCM5100A, no codec, no detect | PCM5100A (**optional module**), no detect |
-| Audio routing | **exclusive**: headphones *or* HDMI | **both** sinks always live | **both** sinks always live |
-| USB host | Pico-PIO-USB on GP1/GP2 | **native** RP2350 controller (OTG adapter) | **native** RP2350 controller (OTG adapter) |
-| Controller ports | — | two NES/SNES ports on PIO (shared CLK/LAT) | two NES/SNES ports on PIO (independent CLK/LAT) |
-| Wii extension port | GP20/21 — **the codec's own I2C bus** | GP0/1 (why there is no UART) | — |
-| Status LEDs | LED GP29 + **5 NeoPixels GP32 as a VU meter** | LED GP25 | LED GP25 |
-| PSRAM | 8 MB on CS1 = GP47 | on CS1 = **GP8** | 8 MB on CS1 = GP47 |
-| SD (SPI0) | MOSI 35 / MISO 36 / SCK 34 / CS 39 | MOSI 7 / MISO 4 / SCK 6 / CS 5 | MOSI 3 / MISO 4 / SCK 2 / CS 5 |
-| UART console | UART0 on GP44/45 | **none** — GP0/1 are the Wii connector | board default (GP0/1) |
+| | Fruit Jam (`fruitjam`) | Murmulator M2 (`murmulatorm2`) | Adafruit DVI + SD (`adafruitdvisd`) | Olimex PICO-PC + Pico 2 (`olimexpicopc`) |
+|---|---|---|---|---|
+| `HW_CONFIG` | 8 | 13 | 2 | 15 |
+| `PICO_BOARD` | `adafruit_fruit_jam` | `pico2` | `pimoroni_pico_plus2_rp2350` | `pico2` |
+| Flash | 16 MB | 4 MB | 16 MB | 4 MB, the last 260 KB held by pico-launcher |
+| Video | HSTX 640×480p60, lanes 13/15/17/19 **inverted** | same | lanes **12/14/16/18, not inverted** | lanes 13/15/**19/17** (D1/D2 swapped), inverted |
+| `clk_hstx` | 126 MHz from a **retasked PLL_USB** (jitter-free) | 126 MHz **from `clk_sys`** (378/3) — PLL_USB is spoken for | same as the M2 | same as the M2 |
+| Audio DAC | TLV320DAC3100 + headphone detect | PCM5100A, no codec, no detect | PCM5100A (**optional module**), no detect | **none** — PWM audio jack on GP28 (L) / GP27 (R) |
+| Audio routing | **exclusive**: headphones *or* HDMI | **both** sinks always live | **both** sinks always live | **both** HDMI and the PWM jack always live |
+| USB host | Pico-PIO-USB on GP1/GP2 | **native** RP2350 controller (OTG adapter) | **native** RP2350 controller (OTG adapter) | **native** RP2350 controller (USB-A socket) |
+| Controller ports | — | two NES/SNES ports on PIO (shared CLK/LAT) | two NES/SNES ports on PIO (independent CLK/LAT) | one NES/SNES port on UEXT (CLK 5 / LAT 9 / DATA 20) |
+| Wii extension port | GP20/21 — **the codec's own I2C bus** | GP0/1 (why there is no UART) | — | — |
+| Status LEDs | LED GP29 + **5 NeoPixels GP32 as a VU meter** | LED GP25 | LED GP25 | LED GP25 |
+| PSRAM | 8 MB on CS1 = GP47 | on CS1 = **GP8** | 8 MB on CS1 = GP47 | **must be fitted**, on CS1 = GP8 |
+| SD (SPI0) | MOSI 35 / MISO 36 / SCK 34 / CS 39 | MOSI 7 / MISO 4 / SCK 6 / CS 5 | MOSI 3 / MISO 4 / SCK 2 / CS 5 | MOSI 7 / MISO 4 / SCK 6 / CS 22 |
+| UART console | UART0 on GP44/45 | **none** — GP0/1 are the Wii connector | board default (GP0/1) | **none** — GP0/1 are the PS/2 port |
 
 `adafruitdvisd` is a Pico 2 footprint (breadboard or Frank's PCB) with the
 [Adafruit DVI Breakout 4984](https://www.adafruit.com/product/4984) on HSTX and the
@@ -75,6 +76,16 @@ must be a Pimoroni Pico Plus 2**, not a stock Pico 2: Duke cannot run without PS
 and `HW_CONFIG 2` puts the PSRAM chip select on GP47 = QMI CS1, which only exists on
 an RP2350B. Its HSTX lanes are the only ones in this table that are *not* inverted —
 a garbled or absent picture there points at `GPIOHSTXINVERTED` first.
+
+`olimexpicopc` is the Olimex RP2040-PICO-PC with a Raspberry Pi Pico 2 plugged in
+instead of the original Pico. A stock Pico 2 has no PSRAM, so one has to be fitted
+on GP8 (QMI CS1) before Duke will start. The board has no I2S DAC: `DUKE_AUDIO_I2S_DRIVER`
+is 0, `DSL_Init()` skips the I2S setup, and every sample pushed to HDMI is also handed
+to the vendored pico_shared `pwm_audio` driver, which plays it on the board's audio jack.
+That driver keeps a 2048-frame ring in SRAM and drains it from a PWM-wrap interrupt on
+core0 at 48 kHz (378 MHz / 7875); it drops or repeats a sample when the ring leaves its
+1/4..3/4 band, so the HDMI ring alone paces the mixer. The PS/2 port on GP0/1 is not
+used.
 
 Two consequences worth knowing on the Murmulator:
 
@@ -117,6 +128,8 @@ and `picotool`.
 ./murmulatorm2-build-forbootloader.sh    # -> build_bl_murmulatorm2/...
 ./adafruitdvisd-build.sh                 # -> build_adafruitdvisd/src/pico/duke3d_game.uf2
 ./adafruitdvisd-build-forbootloader.sh   # -> build_bl_adafruitdvisd/...
+./olimexpicopc-build.sh                  # -> build_olimexpicopc/src/pico/duke3d_game.uf2
+./olimexpicopc-build-forbootloader.sh    # -> build_bl_olimexpicopc/...
 ```
 
 A plain `cmake -S . -B build` (VSCode / CMake Tools) still configures for the Fruit
@@ -136,11 +149,16 @@ picker, as does quitting Duke.
 | Murmulator bootloader | `0x10080000` | 3.5 MB | 4 MB |
 | Adafruit DVI+SD standalone | `0x10000000` | — | 16 MB |
 | Adafruit DVI+SD bootloader | `0x10080000` | 15.5 MB | 16 MB |
+| Olimex PICO-PC standalone | `0x10000000` | — | 4 MB |
+| Olimex PICO-PC bootloader | `0x10080000` | 3.24 MB (ends at pico-launcher, `0x103BF000`) | 4 MB |
 
 Duke keeps **nothing** in flash — `DUKE3D.GRP` streams from SD and savegames sit next
-to it — so the whole partition goes to the app on every board. Only the Murmulator
-needs the totals overridden (`-DDUKE_APP_SIZE` / `-DDUKE_FLASH_TOTAL` in its script);
-the other two match the defaults in `cmake/BootPartition.cmake`.
+to it — so the whole partition goes to the app on every board. Only the 4 MB boards
+need the totals overridden (`-DDUKE_APP_SIZE` / `-DDUKE_FLASH_TOTAL` in their scripts);
+the other two match the defaults in `cmake/BootPartition.cmake`. On the Olimex board
+the app size also stops short of the last 260 KB of flash, which hold pico-launcher,
+so the linker refuses an image that would overwrite it. The pico-bootLoader does not
+build for `HW_CONFIG 15` yet; the bootloader variant is ready for when it does.
 
 Useful options:
 
@@ -369,6 +387,7 @@ key.
 fruitjam_cflags.h              board config (HW_CONFIG 8), force-included at build
 murmulatorm2_cflags.h          board config (HW_CONFIG 13), likewise
 adafruitdvisd_cflags.h         board config (HW_CONFIG 2), likewise
+olimexpicopc_cflags.h          board config (HW_CONFIG 15), likewise
 <tag>-build.sh                 standalone build for that board
 <tag>-build-forbootloader.sh   pico-bootLoader app-partition build
 boards.sh                      which boards a release covers, and their metadata
@@ -390,7 +409,7 @@ src/pico/                      RP2350 platform layer (replaces BUILD's sdlayer.c
   duke_fatal.c                 fatal errors on that screen, then halt
   duke_fatfs_io.c              FatFs behind POSIX *and* newlib syscalls
 3rdparty/pico_shared_drivers   vendored pico_shared (HSTX/I2S/TLV320/PSRAM/SD/
-                               wiipad/i2c-recovery/font)
+                               wiipad/i2c-recovery/font/pwm_audio)
 3rdparty/emu8950               OPL2 emulator
 ```
 
