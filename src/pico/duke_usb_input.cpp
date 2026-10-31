@@ -439,7 +439,7 @@ namespace
     // both learned the hard way on hardware:
     //  - After nespad_begin() the SM runs at a 1 MHz PIO clock, so its first
     //    instruction ("irq wait 0", set-flag-then-park) lands ~1 us after
-    //    enable. The 378 MHz core reaches nespad_read_start() first, its clear
+    //    enable. The 384 MHz core reaches nespad_read_start() first, its clear
     //    outruns the SM's set, the release is lost and the SM parks forever.
     //    Wait out that race before the first start.
     //  - Never call nespad_read_finish() (blocking FIFO reads) unless
@@ -897,8 +897,8 @@ void duke_usb_init(void)
     // Native RP2350 USB controller (rhport 0), selected by tusb_config.h when
     // the board header omits HAS_USBPIO. No PIO program, no VBUS switch and no
     // pin config — the port is the module's own micro-USB socket, so a pad
-    // needs an OTG/host adapter. PLL_USB is left at its stock 48 MHz for this;
-    // that is why duke_boot.c derives clk_hstx from clk_sys on these boards.
+    // needs an OTG/host adapter. At 384 MHz its 48 MHz is divided from PLL_SYS
+    // (duke_boot.c).
     printf("usb: native host controller (rhport 0)\n");
     // No-argument form (pico_shared's non-PIO branch): it expands to
     // tusb_rhport_init(0, NULL), which brings up the host stack on

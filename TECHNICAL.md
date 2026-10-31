@@ -30,7 +30,7 @@ in the 8 MB PSRAM, which instead holds the tile cache and the engine's map array
 Playable, with sound and music, and **hardware-verified on all four boards**. What was
 verified on the Fruit Jam:
 
-- **378 MHz @ 1.35 V**, `clk_hstx` a fixed 126 MHz from a retasked PLL_USB.
+- **384 MHz @ 1.35 V**, `clk_hstx` a fixed 126 MHz from a retasked PLL_USB.
 - **HDMI** 640×480p60 over HSTX (`pico_hdmi`), core1-owned, ~30 fps in-level.
 - **PSRAM** 8 MB on QMI CS1; **SD** over SPI0 with FatFs.
 - **Sound effects and OPL2 music**, with headphone-jack detection switching between
@@ -58,7 +58,7 @@ in that one header.
 | `PICO_BOARD` | `adafruit_fruit_jam` | `pico2` | `pimoroni_pico_plus2_rp2350` | `pico2` |
 | Flash | 16 MB | 4 MB | 16 MB | 4 MB, the last 260 KB held by pico-launcher |
 | Video | HSTX 640×480p60, lanes 13/15/17/19 **inverted** | same | lanes **12/14/16/18, not inverted** | lanes 13/15/**19/17** (D1/D2 swapped), inverted |
-| `clk_hstx` | 126 MHz from a **retasked PLL_USB** (jitter-free) | 126 MHz **from `clk_sys`** (378/3) — PLL_USB is spoken for | same as the M2 | same as the M2 |
+| `clk_hstx` | 126 MHz from a **retasked PLL_USB**, no divider; USB and ADC divided from PLL_SYS (384 / 8) | same | same | same |
 | Audio DAC | TLV320DAC3100 + headphone detect | PCM5100A, no codec, no detect | PCM5100A (**optional module**), no detect | **none** — PWM audio jack on GP28 (L) / GP27 (R) |
 | Audio routing | **exclusive**: headphones *or* HDMI | **both** sinks always live | **both** sinks always live | **both** HDMI and the PWM jack always live |
 | USB host | Pico-PIO-USB on GP1/GP2 | **native** RP2350 controller (OTG adapter) | **native** RP2350 controller (OTG adapter) | **native** RP2350 controller (USB-A socket) |
@@ -83,7 +83,7 @@ on GP8 (QMI CS1) before Duke will start. The board has no I2S DAC: `DUKE_AUDIO_I
 is 0, `DSL_Init()` skips the I2S setup, and every sample pushed to HDMI is also handed
 to the vendored pico_shared `pwm_audio` driver, which plays it on the board's audio jack.
 That driver keeps a 2048-frame ring in SRAM and drains it from a PWM-wrap interrupt on
-core0 at 48 kHz (378 MHz / 7875); it drops or repeats a sample when the ring leaves its
+core0 at 48 kHz (384 MHz / 8000); it drops or repeats a sample when the ring leaves its
 1/4..3/4 band, so the HDMI ring alone paces the mixer. The PS/2 port on GP0/1 is not
 used.
 
@@ -462,7 +462,7 @@ src/pico/                      RP2350 platform layer (replaces BUILD's sdlayer.c
   `tusb_config.h` asks for — and disagreeing versions link cleanly and boot a board
   with no input at all. `duke_usb_input.cpp` `#error`s on the mismatch; keep that check
   if you touch the USB wiring.
-- **Core voltage is `VREG_VOLTAGE_1_35` for 378 MHz**, as in pico-quake2, where the
+- **Core voltage is `VREG_VOLTAGE_1_35` for 384 MHz**, as in pico-quake2, where the
   Pico Plus 2 ran its timedemo at the same speed as at 1.50 V with less heat and a lower
   power draw. 1.35 V is the lowest usable setting: 1.30 V has been found unreliable at
   378 MHz. Do not go up to 1.60 V either, which bootloops some boards. Both 1.35 V and

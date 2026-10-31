@@ -25,9 +25,8 @@
 //                         board points here first.
 //   HAS_USBPIO absent  -> USB host runs on the RP2350's NATIVE controller
 //                         (tusb_config.h picks rhport 0; gamepads and keyboards
-//                         need an OTG adapter). That also forces clk_hstx off
-//                         clk_sys instead of a retasked PLL_USB — see
-//                         duke_boot.c. Build with -DENABLE_PIO_USB=0 to match.
+//                         need an OTG adapter). Build with -DENABLE_PIO_USB=0
+//                         to match.
 //                         (BoardConfigs also offers PIO-USB on this board with
 //                         D+ on GPIO 20; deliberately unused, as in pico-doom.)
 //   DUKE_AUDIO_I2S_DRIVER 2 -> PCM5100A, no codec, no headphone detect, so
@@ -147,8 +146,8 @@
 
 // --- USB host ----------------------------------------------------------------
 // NO HAS_USBPIO / PIN_USB_HOST_* on purpose: tusb_config.h sees HAS_USBPIO
-// undefined and selects the native RP2350 controller (rhport 0), and
-// duke_boot.c takes the clk_sys-derived clk_hstx branch because PLL_USB has to
-// stay at its stock 48 MHz for that controller.
+// undefined and selects the native RP2350 controller (rhport 0). Its 48 MHz
+// is divided from PLL_SYS at 384 MHz, so duke_boot.c can still use PLL_USB as
+// the 126 MHz clk_hstx source.
 
 #endif // DUKE3D_ADAFRUITDVISD_CFLAGS_H

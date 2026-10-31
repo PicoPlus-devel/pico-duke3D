@@ -1,7 +1,7 @@
 //
 //  duke_boot.c — RP2350 entry point for the Duke3D game image.
 //
-//  Brings up the hardware (clocks 378 MHz + 126 MHz clk_hstx, PSRAM, SD) then
+//  Brings up the hardware (clocks 384 MHz + 126 MHz clk_hstx, PSRAM, SD) then
 //  calls the renamed Duke entry Duke3D_main(). Video/audio come up inside
 //  Duke's own init (_platform_init -> pico_display). Clock sequence is the
 //  proven Fruit Jam path shared with the M0 bring-up (pico_main.c), with the
@@ -96,50 +96,74 @@ extern const char *duke_psram_error(void);  // NULL when the PSRAM is usable
 extern void duke_fatfs_init(void);          // SD mount + chdir /roms/duke3d
 extern void duke_video_ensure_up(void);     // HSTX + DOS console (pico_display.c)
 
+// DUKE_CPU_KHZ picks the source of clk_hstx (126 MHz: the 25.2 MHz pixel
+// clock), by the same rule as pico_shared's setClocksAndStartStdio():
+// - a multiple of 48 MHz, such as 384000 (the default): USB and ADC are
+//   divided from PLL_SYS, which leaves PLL_USB free to be a dedicated
+//   126 MHz clk_hstx source;
+// - 126000, 252000 or 504000: clk_hstx is clk_sys / 1, 2 or 4, and PLL_USB
+//   keeps its 48 MHz for USB.
+// Any other clock is refused. 378 MHz (clk_sys / 3) gives the TMDS bits an
+// uneven duty cycle, because clk_hstx has no duty-cycle correction for odd
+// divisors: some displays show that as dots.
+#ifndef DUKE_CPU_KHZ
+#define DUKE_CPU_KHZ 384000
+#endif
+#define DUKE_USB_ON_PLL_SYS (DUKE_CPU_KHZ % 48000 == 0 && DUKE_CPU_KHZ / 48000 <= 16)
+#if !DUKE_USB_ON_PLL_SYS && DUKE_CPU_KHZ != 126000 && DUKE_CPU_KHZ != 252000 && DUKE_CPU_KHZ != 504000
+#error DUKE_CPU_KHZ must be a multiple of 48000 (at most 768000), or 126000, 252000 or 504000
+#endif
+
 static void setup_clocks(void)
 {
-    // 1.35 V at 378 MHz, as pico-quake2: the lowest usable setting (1.30 V has
-    // proven unreliable at this clock), and cooler than the 1.50 V the
-    // pico_shared emulators use. Anything above VREG_VOLTAGE_MAX (1.30 V) needs
-    // the limit lifted first.
+    // 1.35 V, as pico-quake2: the lowest usable setting (1.30 V has proven
+    // unreliable at 378 MHz), and cooler than the 1.50 V the pico_shared
+    // emulators use. Anything above VREG_VOLTAGE_MAX (1.30 V) needs the limit
+    // lifted first.
     vreg_disable_voltage_limit();
     vreg_set_voltage(VREG_VOLTAGE_1_35);
-    qmi_hw->m[0].timing = 0x60007304;   // relax XIP timing before raising clk_sys
+    // Relax XIP timing before raising clk_sys: flash at most 96 MHz (384 / 4),
+    // with the read sample delay scaled to stay at about the same time in ns.
+    // Same formula as pico_shared: 0x60007304 at 384 MHz.
+    {
+        const uint32_t flash_div = (DUKE_CPU_KHZ + 95999) / 96000 < 4 ? 4 : (DUKE_CPU_KHZ + 95999) / 96000;
+        const uint32_t rxdelay = (3 * DUKE_CPU_KHZ + 189000) / 378000;
+        qmi_hw->m[0].timing = 0x60000000u | (14u << 11) | ((rxdelay > 7 ? 7 : rxdelay) << 8) | flash_div;
+    }
     sleep_ms(100);
-    set_sys_clock_khz(378000, true);
+    set_sys_clock_khz(DUKE_CPU_KHZ, true);
     sleep_ms(100);
 
-#ifdef HAS_USBPIO
-    // clk_hstx = fixed 126 MHz from a retasked PLL_USB. Deliberately NOT
-    // derived from clk_sys even though 378/3 = 126 divides exactly: at 378 MHz
-    // PLL_SYS jitter propagates into the TMDS bit clock and strict HDMI sinks
-    // show sparkles. Safe only on PIO-USB boards, where the native USB
-    // controller (which needs PLL_USB at 48 MHz) is unused.
+#if DUKE_USB_ON_PLL_SYS
+    // Move USB and ADC to PLL_SYS (an exact integer divider) before PLL_USB is
+    // retuned, so neither ever sees it change: the native USB host (Murmulator
+    // M2, Pico 2 with the Adafruit DVI breakout, Olimex RP2040-PICO-PC) keeps
+    // its 48 MHz. PLL_USB then becomes a dedicated 126 MHz clk_hstx source with
+    // no divider at all, which keeps the TMDS bits clean on strict HDMI sinks.
+    clock_configure(clk_usb, 0,
+                    CLOCKS_CLK_USB_CTRL_AUXSRC_VALUE_CLKSRC_PLL_SYS,
+                    DUKE_CPU_KHZ * 1000u, USB_CLK_HZ);
+    clock_configure(clk_adc, 0,
+                    CLOCKS_CLK_ADC_CTRL_AUXSRC_VALUE_CLKSRC_PLL_SYS,
+                    DUKE_CPU_KHZ * 1000u, USB_CLK_HZ);
     pll_deinit(pll_usb);
     pll_init(pll_usb, 1, 756000000, 6, 1);   // 756 / 6 = 126 MHz
     clock_configure(clk_hstx, 0,
                     CLOCKS_CLK_HSTX_CTRL_AUXSRC_VALUE_CLKSRC_PLL_USB,
                     126000000u, 126000000u);
 #else
-    // Native-USB boards (Murmulator M2): the USB host controller needs PLL_USB
-    // at its stock 48 MHz, so it cannot be retasked. Derive clk_hstx from
-    // clk_sys instead — 378/3 = 126 exactly, which keeps the 25.2 MHz pixel
-    // clock and satisfies pico_display's 126 MHz assert. This mirrors the
-    // native-USB path in pico_shared's FrensHelpers::setClocksAndStartStdio()
-    // verbatim (the CLK_SYS aux tap; do NOT switch to the CLKSRC_PLL_SYS tap,
-    // the ecosystem has only ever shipped the CLK_SYS form on these boards).
-    // Trade-off: PLL_SYS jitter now rides on the TMDS bit clock, so a strict
-    // sink may sparkle. Unavoidable while PLL_USB is spoken for.
+    // clk_sys / 1, 2 or 4 (126, 252 or 504 MHz): no divider or an even one,
+    // so the TMDS bits keep an even duty cycle. PLL_USB keeps its 48 MHz.
     clock_configure(clk_hstx, 0,
                     CLOCKS_CLK_HSTX_CTRL_AUXSRC_VALUE_CLK_SYS,
-                    378000000u, 126000000u);
+                    DUKE_CPU_KHZ * 1000u, 126000000u);
 #endif
-    // set_sys_clock_khz parked clk_peri on PLL_USB@48 MHz (which the PIO-USB
-    // branch just retasked to 126) — put it on PLL_SYS at full speed on both
-    // variants, before stdio_init_all derives its UART divisors from it.
+    // set_sys_clock_khz parked clk_peri on PLL_USB@48 MHz (which the path
+    // above may just have retuned to 126) — put it on PLL_SYS at full speed,
+    // before stdio_init_all derives its UART divisors from it.
     clock_configure(clk_peri, 0,
                     CLOCKS_CLK_PERI_CTRL_AUXSRC_VALUE_CLKSRC_PLL_SYS,
-                    378000000u, 378000000u);
+                    DUKE_CPU_KHZ * 1000u, DUKE_CPU_KHZ * 1000u);
 }
 
 // ---------------------------------------------------------------------------

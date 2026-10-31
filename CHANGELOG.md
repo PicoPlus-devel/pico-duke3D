@@ -20,9 +20,14 @@ so keep the heading text exactly the tag name.
   are plugged in, so their first press no longer needs settling.
 - The processor runs at a lower core voltage (1.35 V instead of 1.50 V), so the board
   uses less power and runs cooler.
+- The processor runs at 384 MHz instead of 378 MHz.
 
 ### Fixed
 
+- **No more dots or lines in the picture** on the Adafruit DVI + SD board, the
+  Murmulator M2 and the Olimex RP2040-PICO-PC. Some TVs and monitors showed small dots
+  or short dotted lines. The picture is now clean, and USB controllers, keyboards and
+  mice keep working. Thanks to @szuping for the hint that led to this fix.
 - **USB on the Adafruit Fruit Jam:** USB controllers, keyboards and mice are now
   found at every start. On boards with an older RP2350 chip they were often not
   detected.

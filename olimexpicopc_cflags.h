@@ -30,8 +30,8 @@
 //                         -DDUKE_NO_STDIO_UART=1). The DOS startup screen on
 //                         HDMI is the log.
 //   HAS_USBPIO absent  -> as on the M2: native USB host (here wired to the
-//                         board's USB-A socket), clk_hstx off clk_sys — see
-//                         duke_boot.c. Build with -DENABLE_PIO_USB=0 to match.
+//                         board's USB-A socket). Build with -DENABLE_PIO_USB=0
+//                         to match.
 //
 
 // pico_shared BoardConfigs identity of this board. The vendored nespad.cpp
@@ -102,7 +102,7 @@
 // Lock the audio sample rate to 48 kHz — the exact-lock rate for the 25.2 MHz
 // pixel clock (HDMI ACR N=6144, CTS=25200) and the rate baked into
 // hstx_packet.c's IEC 60958 channel-status table. Also an exact PWM rate:
-// 378 MHz / 48 kHz = 7875 clk_sys cycles per sample.
+// 384 MHz / 48 kHz = 8000 clk_sys cycles per sample.
 #define PICO_SOUND_SAMPLE_FREQ 48000
 
 // Audio buffering for the frame-context pump; see fruitjam_cflags.h for the
@@ -148,8 +148,8 @@
 
 // --- USB host ----------------------------------------------------------------
 // NO HAS_USBPIO / PIN_USB_HOST_* on purpose: tusb_config.h sees HAS_USBPIO
-// undefined and selects the native RP2350 controller (rhport 0), and
-// duke_boot.c takes the clk_sys-derived clk_hstx branch because PLL_USB has to
-// stay at its stock 48 MHz for that controller.
+// undefined and selects the native RP2350 controller (rhport 0). Its 48 MHz
+// is divided from PLL_SYS at 384 MHz, so duke_boot.c can still use PLL_USB as
+// the 126 MHz clk_hstx source.
 
 #endif // DUKE3D_OLIMEXPICOPC_CFLAGS_H
