@@ -1,7 +1,7 @@
 # pico-duke3D
 
 A port of Duke Nukem 3D to four small RP2350 hobby boards. Output is HDMI, input is
-a USB gamepad or keyboard, and the game data comes off an SD card.
+a USB gamepad, keyboard or mouse, and the game data comes off an SD card.
 
 The game data stays on the card, so switching between the shareware episode and the
 full Atomic Edition means replacing one file.
@@ -10,8 +10,8 @@ full Atomic Edition means replacing one file.
 
 - Video over HDMI
 - Sound effects and Adlib / Sound Blaster music
-- USB gamepads and keyboards, plus NES, SNES and Wii Classic controllers on the boards
-  that have those connectors
+- USB gamepads, keyboards and mice, plus NES, SNES and Wii Classic controllers on the
+  boards that have those connectors, and a SNES Mouse on the Adafruit DVI + SD board
 - Savegames, settings and screenshots on the SD card
 - Errors are reported on the screen, so no serial cable or computer is needed to find
   out what went wrong
@@ -25,7 +25,8 @@ full Atomic Edition means replacing one file.
 - `DUKE3D.GRP` — the game's data file. The shareware version works, as does the one
   from the registered or Atomic Edition.
 - An HDMI screen, and a gamepad or a keyboard. Either input is sufficient on its own:
-  the game can be played, saved and loaded with a gamepad alone.
+  the game can be played, saved and loaded with a gamepad alone. A mouse is optional,
+  for turning and aiming.
 
 ## Which board
 
@@ -35,8 +36,8 @@ All four are tested and working on real hardware.
 |---|---|---|---|---|
 | Video | HDMI 640×480 | same | same | same |
 | Sound | headphones **or** HDMI — switches when you plug in | headphones and HDMI at once | headphones (optional module) and HDMI at once | audio jack and HDMI at once |
-| USB pad / keyboard | plug straight in | needs an OTG adapter | needs an OTG adapter | plug straight into the USB-A socket |
-| NES/SNES controller ports | — | two | two | one, on the UEXT connector |
+| USB pad / keyboard / mouse | plug straight in | needs an OTG adapter | needs an OTG adapter | plug straight into the USB-A socket |
+| NES/SNES controller ports | — | two | two, also for a SNES Mouse | one, on the UEXT connector |
 | Wii Classic pad | yes | yes | — | — |
 | Lights | blinking LED, plus five LEDs used as a sound-level meter | blinking LED | blinking LED | blinking LED |
 | Also needed | — | — | the module must be a **Pimoroni Pico Plus 2** | a Pico 2 with a **PSRAM chip fitted on GPIO 8** |
@@ -88,6 +89,9 @@ The Pico Plus 2 cannot lie flat against the PCB — the SP/CE connector on its b
 - **v2.8:** original SNES controllers plug in directly.
 - **v2.6:** NES controllers plug in directly. A SNES controller needs a [SNES-to-NES adapter cable you make yourself](https://github.com/PicoPlus-devel/pico-snesPlus/blob/main/snestonescontroller.md), one per port. Ready-made cables exist but are hard to find, and some do not work as expected.
 
+A SNES Mouse (the one sold with Mario Paint) works in either port as well; see
+[Mouse](#mouse).
+
 **A NES controller plays the game, a SNES controller plays all of it.** The ports read a NES pad as a NES pad, so A fires and B jumps, and the menu opens with SELECT+START — but with only two face buttons and no shoulder buttons, crouch and strafe stay out of reach. The ports speak the SNES protocol as well, so a SNES controller gives you the full scheme described in [Which controllers work](#which-controllers-work).
 
 Two controllers give a two-player setup; a USB pad for player 1 and a controller in either port for player 2 works just as well.
@@ -106,8 +110,8 @@ To pick Duke from the [pico-bootLoader](https://github.com/PicoPlus-devel/pico-b
 
 | | |
 |---|---|
-| Two controller ports | NES on v2.6, SNES on v2.8. Both behave exactly as [Which controllers work](#which-controllers-work) describes — including the [SNES first-press quirk](#one-quirk-with-snes-pads-in-these-sockets) |
-| USB pad or keyboard | Through the OTG Y-cable |
+| Two controller ports | NES on v2.6, SNES on v2.8. Both behave exactly as [Which controllers work](#which-controllers-work) describes — including the [first-press quirk of some SNES pads](#one-quirk-with-some-snes-pads-in-these-sockets). A SNES Mouse works in either port on v2.8 |
+| USB pad, keyboard or mouse | Through the OTG Y-cable |
 | Sound | Over HDMI. The optional audio module mentioned in [Which board](#which-board) is a breadboard extra; this PCB has no place for it |
 | Lights | The onboard LED blinks while frames are being drawn. No sound-level meter — that needs the Fruit Jam's LEDs |
 | Wii Classic pads | Not on this board; there is no Wii connector in this design |
@@ -154,8 +158,8 @@ To build from source, see [TECHNICAL.md](TECHNICAL.md).
 
 ## Controls
 
-A gamepad and a keyboard work at the same time, and every controller connected drives
-the same player.
+A gamepad, a keyboard and a mouse work at the same time, and every controller connected
+drives the same player.
 
 In menus, **A confirms and B goes back on every controller**. START also goes back.
 
@@ -235,24 +239,25 @@ NES pad rather than a SNES one, so its two buttons land where any other pad's A 
 menu with **SELECT+START** instead of L+R. Crouch and strafe are the two things it cannot
 reach.
 
-##### One quirk with SNES pads in these sockets
+##### One quirk with some SNES pads in these sockets
 
-**A SNES pad works in full, but its first press after switching on may be read as a NES
-pad's.** If that first press is **B** it fires instead of jumping, and if it is **Y** it
-jumps instead of using the jetpack. **Pressing A, X, L or R once settles it**, and every
-button behaves normally from then until the board is switched off. Pads in the two
+**An original Nintendo SNES controller is recognised as soon as it is plugged in.** Some
+aftermarket SNES pads are not, and their first press after switching on may be read as a
+NES pad's. If that first press is **B** it fires instead of jumping, and if it is **Y**
+it jumps instead of using the jetpack. **Pressing A, X, L or R once settles it**, and
+every button behaves normally from then until the board is switched off. Pads in the two
 sockets are handled separately, so settling one does not settle the other. Nothing needs
 configuring, and there is no setting to get wrong.
 
 This is the price of supporting both pads in one socket with no switch to throw. The two
-share a connector and a protocol, and a NES pad announces itself only by pulling four
-wires low at the end of each read — which original Nintendo pads do, but the aftermarket
-ones do not. An aftermarket NES pad and an untouched SNES pad are therefore identical on
-the wire, and the port cannot know which it is holding until a button arrives that only
-one of them has: **A, X, L and R do not exist on a NES pad**, so the first press of any
-of them is proof. Until that proof arrives the port assumes a NES pad, because guessing
-wrong that way costs a SNES player one press, while guessing the other way leaves a NES
-player with no fire button at all.
+share a connector and a protocol. An original NES pad announces itself by pulling four
+wires low at the end of each read, and an original SNES pad by holding the line low after
+its last button; aftermarket pads often do neither. An aftermarket NES pad and an
+untouched aftermarket SNES pad are then identical on the wire, and the port cannot know
+which it is holding until a button arrives that only one of them has: **A, X, L and R do
+not exist on a NES pad**, so the first press of any of them is proof. Until that proof
+arrives the port assumes a NES pad, because guessing wrong that way costs a SNES player
+one press, while guessing the other way leaves a NES player with no fire button at all.
 
 **Wii Classic pads** on the Fruit Jam and Murmulator M2: a NES Classic Mini, SNES
 Classic Mini or Wii Classic Controller (Pro), on an adapter such as the
@@ -350,10 +355,44 @@ A few keys do nothing here:
 * **Insert, Home, PageUp, Delete, End, PageDown**, PrintScreen and the Windows keys.
   Duke's default bindings put look and aim on the first six, which is why the tables
   above use the keypad for those instead.
-* **`` ` ``**, **`U`** and **`T`** / **`W`** / **`K`** are for the console, mouse aiming
-  and multiplayer chat, none of which exist on this port.
+* **`` ` ``** and **`T`** / **`W`** / **`K`** are for the console and multiplayer chat,
+  neither of which exists on this port.
 
 Left and right Ctrl, Shift and Alt are equivalent.
+
+### Mouse
+
+A USB mouse works on every board, next to the keyboard or a gamepad. Connect it before
+switching on, as with USB pads. On the Adafruit DVI + SD board an original **SNES Mouse**
+(the one sold with Mario Paint) also works, in either controller port, and can be plugged
+in at any time. With both connected, either one steers.
+
+| Mouse | Does |
+|---|---|
+| Move left / right | Turn |
+| Move forward / back | Look down / up (mouse aiming) |
+| Left button | Fire |
+| Right button | Open / use / flip a switch |
+| Middle button | Jump |
+| Wheel up / down | Previous / next weapon |
+
+A SNES Mouse has the left and right buttons only.
+
+The mouse turns and aims but does not walk: walking stays on the keyboard or a gamepad,
+both of which work alongside it. To walk with the mouse alone, bind a button to
+*Move_Forward* in *Options → Setup Mouse → Button Setup*.
+
+In menus, moving the mouse forward and back or turning the wheel moves the cursor, the
+left button confirms and the right button goes back.
+
+All of this can be changed in *Options → Setup Mouse*: the speed of each direction, which
+button does what (including the two side buttons some mice have), and mouse aiming.
+
+**Mouse aiming is on from the start.** **`U`** turns it off and on again, as does
+*Mouse Aiming* in the same menu. With it off, moving the mouse forward and back does
+nothing. With it on, the view no longer tilts by itself on slopes, also when playing with
+a gamepad. Pushing the mouse forward looks down, as in the original game; *Mouse Aiming
+Flip* in the same menu reverses that.
 
 ## Saving and loading
 
@@ -444,10 +483,10 @@ Two things to check on the board itself:
   Wii socket and the sound chip share a connection, and some pads hold it low until they
   are initialised. This is handled automatically, but if there is still no sound, unplug
   the pad and reset to confirm.
-* If a SNES pad in a **NES/SNES socket** fires when you meant to jump, and only on the
-  first press after switching on, that is expected — press A once and it corrects itself
-  for the rest of the session. See
-  [One quirk with SNES pads](#one-quirk-with-snes-pads-in-these-sockets).
+* If an aftermarket SNES pad in a **NES/SNES socket** fires when you meant to jump, and
+  only on the first press after switching on, that is expected — press A once and it
+  corrects itself for the rest of the session. See
+  [One quirk with some SNES pads](#one-quirk-with-some-snes-pads-in-these-sockets).
 
 ## Technical documentation
 

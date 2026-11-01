@@ -30,13 +30,13 @@ in the 8 MB PSRAM, which instead holds the tile cache and the engine's map array
 Playable, with sound and music, and **hardware-verified on all four boards**. What was
 verified on the Fruit Jam:
 
-- **378 MHz @ 1.50 V**, `clk_hstx` a fixed 126 MHz from a retasked PLL_USB.
+- **384 MHz @ 1.35 V**, `clk_hstx` a fixed 126 MHz from a retasked PLL_USB.
 - **HDMI** 640×480p60 over HSTX (`pico_hdmi`), core1-owned, ~30 fps in-level.
 - **PSRAM** 8 MB on QMI CS1; **SD** over SPI0 with FatFs.
 - **Sound effects and OPL2 music**, with headphone-jack detection switching between
   I2S (TLV320DAC3100) and HDMI data-island audio — plug in and HDMI audio mutes,
   unplug and it returns.
-- **USB gamepad and keyboard** over PIO-USB.
+- **USB gamepad, keyboard and mouse** over PIO-USB.
 - **DOS-style startup screen** on the HDMI output (40×25, pico_shared's 8×8 font),
   live from the first line of boot, with fatal errors reported on it.
 - Bootloader variant, quit-to-picker, save/load and settings persistence.
@@ -58,11 +58,11 @@ in that one header.
 | `PICO_BOARD` | `adafruit_fruit_jam` | `pico2` | `pimoroni_pico_plus2_rp2350` | `pico2` |
 | Flash | 16 MB | 4 MB | 16 MB | 4 MB, the last 260 KB held by pico-launcher |
 | Video | HSTX 640×480p60, lanes 13/15/17/19 **inverted** | same | lanes **12/14/16/18, not inverted** | lanes 13/15/**19/17** (D1/D2 swapped), inverted |
-| `clk_hstx` | 126 MHz from a **retasked PLL_USB** (jitter-free) | 126 MHz **from `clk_sys`** (378/3) — PLL_USB is spoken for | same as the M2 | same as the M2 |
+| `clk_hstx` | 126 MHz from a **retasked PLL_USB**, no divider; USB and ADC divided from PLL_SYS (384 / 8) | same | same | same |
 | Audio DAC | TLV320DAC3100 + headphone detect | PCM5100A, no codec, no detect | PCM5100A (**optional module**), no detect | **none** — PWM audio jack on GP28 (L) / GP27 (R) |
 | Audio routing | **exclusive**: headphones *or* HDMI | **both** sinks always live | **both** sinks always live | **both** HDMI and the PWM jack always live |
 | USB host | Pico-PIO-USB on GP1/GP2 | **native** RP2350 controller (OTG adapter) | **native** RP2350 controller (OTG adapter) | **native** RP2350 controller (USB-A socket) |
-| Controller ports | — | two NES/SNES ports on PIO (shared CLK/LAT) | two NES/SNES ports on PIO (independent CLK/LAT) | one NES/SNES port on UEXT (CLK 5 / LAT 9 / DATA 20) |
+| Controller ports | — | two NES/SNES ports on PIO (shared CLK/LAT) | two NES/SNES ports on PIO (independent CLK/LAT), **SNES Mouse too** (`NESPAD_SNES_MOUSE`) | one NES/SNES port on UEXT (CLK 5 / LAT 9 / DATA 20) |
 | Wii extension port | GP20/21 — **the codec's own I2C bus** | GP0/1 (why there is no UART) | — | — |
 | Status LEDs | LED GP29 + **5 NeoPixels GP32 as a VU meter** | LED GP25 | LED GP25 | LED GP25 |
 | PSRAM | 8 MB on CS1 = GP47 | on CS1 = **GP8** | 8 MB on CS1 = GP47 | **must be fitted**, on CS1 = GP8 |
@@ -83,7 +83,7 @@ on GP8 (QMI CS1) before Duke will start. The board has no I2S DAC: `DUKE_AUDIO_I
 is 0, `DSL_Init()` skips the I2S setup, and every sample pushed to HDMI is also handed
 to the vendored pico_shared `pwm_audio` driver, which plays it on the board's audio jack.
 That driver keeps a 2048-frame ring in SRAM and drains it from a PWM-wrap interrupt on
-core0 at 48 kHz (378 MHz / 7875); it drops or repeats a sample when the ring leaves its
+core0 at 48 kHz (384 MHz / 8000); it drops or repeats a sample when the ring leaves its
 1/4..3/4 band, so the HDMI ring alone paces the mixer. The PS/2 port on GP0/1 is not
 used.
 
@@ -166,7 +166,7 @@ Useful options:
 | `-DDUKE_VIDEO_DIAG=1` | 1 Hz `vid:`/`audio:` health lines on core0 (fps, audio production rate, queue level, underruns) |
 | `-DDUKE_HSTX_DEBUG=1` | pico_hdmi's own core1 register dump. **Costs ~33 ms/s of core1 and starves the audio** — for debugging an HSTX wedge only, never for judging audio |
 | `-DDUKE_OPL_RENDERER=linear` | cheaper OPL renderer (~half the cost, quality unvalidated on device); default is `reference` |
-| `-DDUKE_PAD_DIAG=1` | log the internal gamepad button word on every change — per source, decoded to names. **Use this before editing any button mapping**, see below |
+| `-DDUKE_PAD_DIAG=1` | log the internal gamepad button word on every change — per source, decoded to names — plus each NES/SNES port's word and detected type, and the mouse buttons. **Use this before editing any button mapping**, see below |
 | `-DDUKE_PSRAM_SIZE=4096k` | shrink the linker's PSRAM region (the runtime clamp usually makes this unnecessary) |
 
 **Every option above is sticky in `CMakeCache.txt`.** Re-running a build script without
@@ -307,23 +307,24 @@ SNES pad, a real NES controller therefore came out with its A on `io B` and its 
 `io Y`, which the layout reads as jump and jetpack: no fire button, and confirm/back
 swapped in menus.
 
-The fix is at the source. `nespad_decode()` in the vendored driver **already
-distinguishes the two shapes** — an original NES pad leaves clocks 13-16 low, while a
-SNES pad drives those 4 ID bits high so it can never set all four — and then strips the
-ID bits and discards the verdict. A local addition (`nespad_is_nes[2]`, same pattern as
-`nespad_read_ready()`) publishes it, and `nesToButtons(nes, is_nes)` puts a NES pad's
-two buttons on `io A` and `io B`, where an ordinary two-button pad has them.
+The fix is at the source. `nespad_decode()` in the vendored driver works out what each
+port holds and publishes it as `nespad_padtype[]` (pico_shared `fb9ad91`, which replaced
+a local `nespad_is_nes[]` this port used to carry), and `nesToButtons(nes, is_nes)` puts
+a NES pad's two buttons on `io A` and `io B`, where an ordinary two-button pad has them.
 
-**`nespad_is_nes[]` is a positive ID of an *original* NES pad, not a pad-shape oracle.**
-It relies on the 4021's serial input being grounded. Aftermarket and clone NES pads idle
-that line high, so they report `nes=0` and are bit-for-bit indistinguishable from a SNES
-pad with nothing pressed (measured: A → `0x0001`, B → `0x0002`, `nes=0`, bits 8-11 dead).
-No static test can separate them. `padIsNes()` therefore adds the one *dynamic*
-discriminator that has no false positives: bits 8-11 are SNES A, X, L and R, and a
-two-button pad can never set them, so a port is assumed NES and **latches SNES for good**
-the first time it sets one. The price is one press: a genuine SNES pad whose first press
-is B or Y — before any A, X, L or R — has that press read as a NES A or B. The latch is
-per port and lives until reboot, except that a positive NES ID clears it.
+**What the driver can and cannot tell.** `NESPAD_TYPE_NES` is a positive ID of an
+*original* NES pad: clocks 13-16 read low because its 4021's serial input is grounded.
+`NESPAD_TYPE_SNES` is set when clocks 17-18 read low — an official SNES pad pulls the
+line low after its 16 bits even while idle, where an empty port leaves it high — or when
+any of bits 8-11 (SNES A, X, L, R) is set, which a two-button pad never can; it is sticky
+until a NES ID replaces it. Everything else stays `NESPAD_TYPE_UNKNOWN`: an empty port,
+an aftermarket NES pad (whose 4021 input idles high, so it is bit-for-bit a SNES pad with
+nothing pressed: A → `0x0001`, B → `0x0002`, bits 8-11 dead), and an aftermarket SNES pad
+that does not pull the line low. `padIsNes()` translates anything that is not SNES as
+NES. The price is one press, and only for that last kind of pad: if its first press is B
+or Y — before any A, X, L or R — that press is read as a NES A or B. An original SNES pad
+is recognised at once. Before the driver resync Duke latched on bits 8-11 itself and
+every SNES pad paid the one press.
 
 Sister ports are immune for reasons Duke cannot copy: pico-infonesPlus feeds bits 0-7
 straight into a NES emulator where bit 0 *is* A, and pico-doom maps bit 0 to fire for
@@ -380,6 +381,38 @@ not anything was typed**, and `KB_Getch()` derives its ASCII from `KB_LastScan` 
 `scancodeToASCII[]`. The pad's **A** sends Enter, so it lands in that queue like a real
 key.
 
+### The mouse
+
+The mouse is the one input that does **not** go through scancodes. Duke reads it itself,
+once per `CONTROL_GetInput()`, through BUILD's `getmousevalues()` (`engine.c`), which
+calls `readmousexy()` and `readmousebstatus()` — in `duke_usb_input.cpp`. That one path
+already drives turning, mouse aiming, the bindings and sensitivity in *Setup Mouse* and
+mouse navigation in `probe()`, so nothing in `Game/` needed changing for it to work.
+
+* **`moustat` gates everything.** `getmousevalues()` returns zeros while it is 0, and
+  nothing in the game calls `initmouse()`. SDL's `display.c` set it inside `setupmouse()`,
+  called from `init_new_res_vars()`; `pico_display.c` does the same.
+* **Scaling is SDL's**: the counts are returned `<< 2`, so at the default sensitivity one
+  count turns one BUILD angle unit (of 2048). Motion older than 250 ms is dropped, or a
+  mouse moved during a level load arrives as one spin.
+* **Button bits are SDL 1.2's**: 0 left, 1 right, 2 middle, 3/4 wheel up/down, 5/6 the
+  side buttons — the order *Button Setup* names them in. The wheel bits are one-shot, set
+  for a single read per scroll, as `display.c` made them.
+* **USB and SNES mice are merged** into the same deltas and buttons. The SNES Mouse
+  (`NESPAD_SNES_MOUSE`, `adafruitdvisd` only) is held by the driver at its lowest
+  sensitivity, about 50 counts per inch, so `snesMouseCollect()` accelerates it the way
+  pico-quake2 does: 4 USB counts per SNES count below ~1 inch/s, rising to 16 above
+  ~5 inches/s. Speed is measured over elapsed time rather than per read, because Duke's
+  reads come from the idle hook, at least 2 ms apart but irregular. It is not enabled on
+  the Murmulator M2, where the sensitivity pulse would reach both ports through the shared
+  CLK/LAT lines.
+* **Defaults need a marker.** `CONFIG_WriteSetup()` writes every `MouseButtonN` on every
+  exit, empty while nothing was bound, so each `duke3d.cfg` from before the mouse worked
+  already says "no bindings". `CONFIG_ReadSetup()` therefore seeds the defaults (left
+  Fire, right Open, middle Jump, wheel previous/next weapon, mouse aiming on) only when
+  `[Controls] PicoMouseDefaults` is missing, and the write-back sets it. Without mouse
+  aiming, player.c ignores mouse Y altogether (`FIX_00021`).
+
 ## Repository layout
 
 ```
@@ -429,8 +462,12 @@ src/pico/                      RP2350 platform layer (replaces BUILD's sdlayer.c
   `tusb_config.h` asks for — and disagreeing versions link cleanly and boot a board
   with no input at all. `duke_usb_input.cpp` `#error`s on the mismatch; keep that check
   if you touch the USB wiring.
-- **Core voltage stays at `VREG_VOLTAGE_1_50` for 378 MHz.** 1.60 V bootloops some
-  boards.
+- **Core voltage is `VREG_VOLTAGE_1_35` for 384 MHz**, as in pico-quake2, where the
+  Pico Plus 2 ran its timedemo at the same speed as at 1.50 V with less heat and a lower
+  power draw. 1.35 V is the lowest usable setting: 1.30 V has been found unreliable at
+  378 MHz. Do not go up to 1.60 V either, which bootloops some boards. Both 1.35 V and
+  1.50 V are outside the chip's specification; anything above 1.30 V needs
+  `vreg_disable_voltage_limit()`, which `setup_clocks()` calls.
 - **The Wii pad must be brought up before anything touches the codec**, because on the
   Fruit Jam they share SDA/SCL. `duke_wiipad_init()` therefore sits in `main()`, long
   before `DSL_Init()`, and holds the DAC in reset while it clears the bus. Moving it

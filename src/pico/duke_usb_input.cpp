@@ -1,5 +1,5 @@
 //
-//  duke_usb_input.cpp — USB gamepad (and keyboard) input for the Duke3D port.
+//  duke_usb_input.cpp — USB gamepad, keyboard and mouse input for the Duke3D port.
 //
 //  Bridges the pico_shared USB HID host driver (hid_app.cpp: generic HID pads,
 //  DualShock, XInput/Xbox via tusb_xinput, plus boot keyboards) to Duke's
@@ -104,6 +104,14 @@
 //                 Classic Controller (Pro)) polled over I2C, folded in the same
 //                 way, on their namesakes; see wiiToButtons().
 //
+//  The mouse is the one input that is NOT a scancode. Duke reads it itself, once
+//  per CONTROL_GetInput(), through BUILD's getmousevalues() -> readmousexy() and
+//  readmousebstatus(), both at the bottom of this file. That one path already
+//  does turning, mouse aiming, the bindings in Options -> Setup Mouse and mouse
+//  navigation in the menus, so all this file has to do is hand over the motion
+//  and the buttons. A USB mouse and a SNES Mouse in a controller port (boards with
+//  NESPAD_SNES_MOUSE) are merged into one, so Duke cannot tell them apart.
+//
 #include <stdio.h>
 #include <stdint.h>
 
@@ -141,6 +149,13 @@
 #else
 #define DUKE_HAS_NESPAD_1 0
 #endif
+// SNES Mouse in either port: opted into by the board header, which nespad.h
+// (default 0) and nespad.cpp both see through the force-include.
+#if DUKE_HAS_NESPAD && NESPAD_SNES_MOUSE
+#define DUKE_HAS_SNES_MOUSE 1
+#else
+#define DUKE_HAS_SNES_MOUSE 0
+#endif
 
 // Wii-extension pads on I2C (NES Classic Mini, SNES Classic Mini, Wii Classic
 // Controller (Pro)), through the duke_wiipad.cpp glue. Same -1-disables
@@ -157,6 +172,10 @@ extern "C" {
 void pico_display_post_key(uint8_t rawcode);   // pico_display.c -> keyhandler()
 void duke_usb_init(void);
 void duke_usb_poll(void);
+
+// Engine/display.h, called by BUILD's getmousevalues() (Engine/engine.c).
+void readmousexy(short *x, short *y);
+void readmousebstatus(short *bstatus);
 
 // Game/menues.c. Needed because one button has to mean fire in game and confirm
 // in a menu.
@@ -403,7 +422,10 @@ namespace
 
 #if DUKE_HAS_NESPAD
     uint32_t nesToButtons(uint16_t nes, bool is_nes);   // defined below
-    bool padIsNes(int port, uint16_t word);             // defined below
+    bool padIsNes(int port);                            // defined below
+#if DUKE_HAS_SNES_MOUSE
+    void snesMouseCollect();                            // defined below
+#endif
 
     // Lazy-init on first poll, then harvest the PIO read started on the
     // previous poll and immediately kick off the next one (~200 us per
@@ -417,7 +439,7 @@ namespace
     // both learned the hard way on hardware:
     //  - After nespad_begin() the SM runs at a 1 MHz PIO clock, so its first
     //    instruction ("irq wait 0", set-flag-then-park) lands ~1 us after
-    //    enable. The 378 MHz core reaches nespad_read_start() first, its clear
+    //    enable. The 384 MHz core reaches nespad_read_start() first, its clear
     //    outruns the SM's set, the release is lost and the SM parks forever.
     //    Wait out that race before the first start.
     //  - Never call nespad_read_finish() (blocking FIFO reads) unless
@@ -466,76 +488,78 @@ namespace
         not_ready_since = 0;
         nespad_read_finish();
 #if DUKE_PAD_DIAG
-        // Driver-level truth, before any translation: the raw 12-bit serial word
-        // per port, the driver's NES/SNES verdict and the one padIsNes() actually
-        // translates by (`use`), which differ for a clone NES pad. An EMPTY port
-        // must read 0000 (its DATA pin is pulled up, so a disconnected socket
-        // inverts to all zeros). Anything else there is phantom input being OR-ed
-        // into the merged button word, which can mask the real pad's presses.
+        // Driver-level truth, before any translation: the 12-bit serial word per
+        // port and the driver's verdict on what is plugged in (`?` = it cannot
+        // tell yet, which padIsNes() translates as NES). An EMPTY port must read
+        // 0000 (its DATA pin is pulled up, so a disconnected socket inverts to all
+        // zeros), and so does a SNES Mouse, which reports through nespad_mouse[].
+        // Anything else there is phantom input being OR-ed into the merged button
+        // word, which can mask the real pad's presses.
         {
+            static const char *const kType[] = { "?", "NES", "SNES", "MOUSE" };
             static uint16_t p0 = 0xffff, p1 = 0xffff;
-            if (nespad_states_ext[0] != p0 || nespad_states_ext[1] != p1)
+            static uint8_t t0 = 0xff, t1 = 0xff;
+            if (nespad_states_ext[0] != p0 || nespad_states_ext[1] != p1 ||
+                nespad_padtype[0] != t0 || nespad_padtype[1] != t1)
             {
                 p0 = nespad_states_ext[0];
                 p1 = nespad_states_ext[1];
-                printf("nespad: port0=%04x nes=%d use=%d  port1=%04x nes=%d use=%d\n",
-                       p0, nespad_is_nes[0] ? 1 : 0, padIsNes(0, p0) ? 1 : 0,
-                       p1, nespad_is_nes[1] ? 1 : 0, padIsNes(1, p1) ? 1 : 0);
+                t0 = nespad_padtype[0];
+                t1 = nespad_padtype[1];
+                printf("nespad: port0=%04x %s  port1=%04x %s\n",
+                       p0, t0 < 4 ? kType[t0] : "!", p1, t1 < 4 ? kType[t1] : "!");
             }
         }
 #endif
         // Translated per port BEFORE the merge, because the two ports can hold
         // different pad shapes and the verdict is per port. Merging the raw words
         // first would lose that.
-        last = nesToButtons(nespad_states_ext[0], padIsNes(0, nespad_states_ext[0]))
-             | nesToButtons(nespad_states_ext[1], padIsNes(1, nespad_states_ext[1]));
+        last = nesToButtons(nespad_states_ext[0], padIsNes(0))
+             | nesToButtons(nespad_states_ext[1], padIsNes(1));
+#if DUKE_HAS_SNES_MOUSE
+        snesMouseCollect();   // a mouse port read as no buttons just above
+#endif
+        // Straight after the finish is safe here, unlike pico-quake2's timer
+        // tick: a state machine is back on its "irq wait" ~5 us after handing
+        // its word over, and this read was started >= 2 ms ago (the idle hook's
+        // gate), never microseconds.
         nespad_read_start();
         return last;
     }
 
     // Which shape to translate a port's serial word as -- the answer nesToButtons()
-    // needs, and NOT simply nespad_is_nes[].
+    // needs. Anything the driver has not positively identified as a SNES pad is
+    // read as a NES pad; pico-quake2's to_buttons() asks the same question.
     //
-    // nespad_is_nes[] is a *positive* identification of an original NES pad and
-    // nothing more. It is true when clocks 9-16 all read low, which an original
-    // pad guarantees because its 4021's serial input is grounded. Aftermarket and
-    // clone NES pads idle that line high instead, so they reach here reporting
-    // nes=0 -- bit for bit indistinguishable from a SNES pad with nothing pressed.
-    // Measured on such a pad: A -> word 0x0001, B -> 0x0002, nes=0 throughout,
-    // and bits 8-11 dead. Translated as a SNES pad (as this used to) its A lands on
-    // io B and its B on io Y: no fire button, confirm/back swapped in menus.
-    // pico-doom never hit this because it maps bit 0 to fire for both shapes at
-    // once and asks no question; Duke's four-button layout cannot do that without
-    // giving a SNES pad two fire buttons and no crouch or jetpack.
+    // nespad_padtype[] (pico_shared fb9ad91) knows three things about a port:
+    //  - NES: clocks 13-16 all read low, which an ORIGINAL NES pad guarantees
+    //    because its 4021's serial input is grounded.
+    //  - SNES: either clocks 17-18 read low -- an official SNES pad pulls the line
+    //    low after its 16 bits even while idle, where an empty port leaves it high
+    //    -- or A, X, L or R has been down (bits 8-11), which a two-button pad can
+    //    never set. Sticky until a NES ID replaces it.
+    //  - neither: an empty port, an aftermarket NES pad (whose 4021 input idles
+    //    high, so it reads bit for bit like a SNES pad with nothing pressed:
+    //    A -> 0x0001, B -> 0x0002, bits 8-11 dead), or an idle aftermarket SNES
+    //    pad that does not pull the line low.
     //
-    // There is no static discriminator -- both pads really do put out the same 16
-    // bits -- but there is a decisive dynamic one: bits 8-11 are SNES A, X, L and
-    // R, and a pad with only two buttons can never set them. So assume NES, and
-    // latch SNES for good the moment a port proves it is one. False positives are
-    // impossible in that direction; an empty port reads 0x0000 and can never latch.
+    // Why "neither" has to mean NES: translated as a SNES pad, an aftermarket NES
+    // pad's A lands on io B and its B on io Y -- no fire button, confirm and back
+    // swapped in menus. pico-doom never hit this because it maps bit 0 to fire for
+    // both shapes at once; Duke's four-button layout cannot do that without giving
+    // a SNES pad two fire buttons and no crouch or jetpack.
     //
-    // Cost, and it is the whole cost: a genuine SNES pad whose FIRST press is B or
-    // Y (before any A, X, L or R) has that one press read as a NES pad's A or B --
-    // fire instead of jump. The next A press corrects it permanently. Weigh that
-    // against a clone NES pad having no fire button at all.
+    // The cost, and it is now the whole cost: an aftermarket SNES pad that does not
+    // pull the line low, whose FIRST press is B or Y (before any A, X, L or R), has
+    // that one press read as a NES pad's A or B -- fire instead of jump. The next A
+    // press corrects it until reboot. An original SNES pad never pays it. (This
+    // latch used to live here, on a local nespad_is_nes[]; the driver does it now.)
     //
-    // The latch is per port and lives until reboot, except that a positive NES ID
-    // clears it, so swapping a SNES pad for an original NES one needs no reboot.
-    // The reverse (SNES pad, then a clone in the same port) does need one: an
-    // unplugged port is indistinguishable from an idle one, so there is no hotplug
-    // edge to reset on, and a timeout would re-arm the first-press cost above every
-    // time a player let go of the pad for a few seconds.
-    bool padIsNes(int port, uint16_t word)
+    // A SNES Mouse is NESPAD_TYPE_MOUSE and reads 0 here, so its port adds no
+    // buttons whichever way it is translated.
+    bool padIsNes(int port)
     {
-        static bool snes_latched[2] = {false, false};
-        if (nespad_is_nes[port])
-        {
-            snes_latched[port] = false;
-            return true;
-        }
-        if (word & 0x0F00)          // SNES A, X, L or R -- settled, permanently
-            snes_latched[port] = true;
-        return !snes_latched[port];
+        return nespad_padtype[port] != NESPAD_TYPE_SNES;
     }
 
     // nespad_states_ext is in SNES serial order; translate it into the same
@@ -574,6 +598,76 @@ namespace
         if (nes & 0x0800) b |= Button::R;
         return b;
     }
+
+#if DUKE_HAS_SNES_MOUSE
+    // SNES Mouse, either port. The driver keeps it at its lowest sensitivity,
+    // about 50 counts per inch -- a sixteenth of a USB mouse -- and its own higher
+    // settings only boost movements of 4 counts or more between two reads, which
+    // at a read every 2 ms takes a swipe of 40 inches a second. So the boost is
+    // done here, as pico-quake2 does it: a slow movement gets kSnesGainSlow USB
+    // counts per SNES count, for aiming, rising to kSnesGainFast from
+    // kSnesSpeedSlow to kSnesSpeedFast. Fast, that is a USB mouse of 800 counts
+    // per inch, which Duke at its default sensitivity turns about 140 degrees per
+    // inch; the Setup Mouse bars scale both mice alike.
+    //
+    // Speeds are counts per second, averaged over about 32 ms. pico-quake2
+    // measures per read because its reads come from a fixed 4 ms timer; here they
+    // come from the idle hook, at least 2 ms apart but irregular (_nextpage()'s
+    // frame pacing does not run it), so the elapsed time is measured instead.
+    constexpr int32_t kSnesGainSlow  = 4;      // 200 counts/inch equivalent
+    constexpr int32_t kSnesGainFast  = 16;     // 800 counts/inch equivalent
+    constexpr int32_t kSnesSpeedSlow = 50;     // counts/s: 1 inch a second
+    constexpr int32_t kSnesSpeedFast = 250;    // counts/s: 5 inches a second
+    constexpr uint32_t kSnesAverageUs = 32000;
+
+    int32_t snesUnits[2];      // motion not handed to Duke yet, in 1/16 USB counts
+    uint8_t snesButtons;       // bit 0 left, bit 1 right -- Duke's own bits 0/1
+
+    // Called once per completed read: takes the counts the driver accumulated
+    // and converts them at the gain for the current speed.
+    void snesMouseCollect()
+    {
+        static uint32_t last_us;
+        static int32_t speed;  // counts per second, averaged
+        int32_t cx = 0, cy = 0;
+        for (int i = 0; i < 2; i++)
+        {
+            cx += nespad_mouse[i].dx;
+            cy += nespad_mouse[i].dy;
+            nespad_mouse[i].dx = nespad_mouse[i].dy = 0;
+        }
+        snesButtons = nespad_mouse[0].buttons | nespad_mouse[1].buttons;
+
+        const uint32_t now = time_us_32();
+        const uint32_t dt = (now - last_us) ? (now - last_us) : 1;
+        last_us = now;
+        const int32_t c = (cx < 0 ? -cx : cx) + (cy < 0 ? -cy : cy);
+        const int32_t rate = (int32_t)((int64_t)c * 1000000 / dt);
+        // Weighted by the time this read covers; a read after a stall of 32 ms or
+        // more replaces the average outright.
+        const uint32_t w = dt < kSnesAverageUs ? dt : kSnesAverageUs;
+        speed += (int32_t)((int64_t)(rate - speed) * w / kSnesAverageUs);
+
+        int32_t gain;          // in 1/16 USB counts per SNES count
+        if (speed <= kSnesSpeedSlow)
+            gain = kSnesGainSlow * 16;
+        else if (speed >= kSnesSpeedFast)
+            gain = kSnesGainFast * 16;
+        else
+            gain = kSnesGainSlow * 16 + (speed - kSnesSpeedSlow) *
+                   (kSnesGainFast - kSnesGainSlow) * 16 / (kSnesSpeedFast - kSnesSpeedSlow);
+        snesUnits[0] += cx * gain;
+        snesUnits[1] += cy * gain;
+    }
+
+    // Whole USB counts of one axis; the fraction stays for the next call.
+    int32_t snesMouseTake(int axis)
+    {
+        const int32_t n = snesUnits[axis] / 16;
+        snesUnits[axis] -= n * 16;
+        return n;
+    }
+#endif // DUKE_HAS_SNES_MOUSE
 #endif // DUKE_HAS_NESPAD
 
 #if DUKE_HAS_WIIPAD
@@ -803,8 +897,8 @@ void duke_usb_init(void)
     // Native RP2350 USB controller (rhport 0), selected by tusb_config.h when
     // the board header omits HAS_USBPIO. No PIO program, no VBUS switch and no
     // pin config — the port is the module's own micro-USB socket, so a pad
-    // needs an OTG/host adapter. PLL_USB is left at its stock 48 MHz for this;
-    // that is why duke_boot.c derives clk_hstx from clk_sys on these boards.
+    // needs an OTG/host adapter. At 384 MHz its 48 MHz is divided from PLL_SYS
+    // (duke_boot.c).
     printf("usb: native host controller (rhport 0)\n");
     // No-argument form (pico_shared's non-PIO branch): it expands to
     // tusb_rhport_init(0, NULL), which brings up the host stack on
@@ -825,4 +919,78 @@ void duke_usb_poll(void)
     tuh_task();
     pollGamePads();
     pollKeyboard();
+}
+
+// ---------------------------------------------------------------------------
+// Mouse: BUILD's getmousevalues() (Engine/engine.c) calls these two, once per
+// CONTROL_GetInput(), as long as moustat is set (setupmouse() in pico_display.c).
+// io::MouseState is filled by the HID callbacks inside tuh_task(), i.e. in
+// duke_usb_poll() on this same core and thread, so it is read and zeroed here
+// without locking -- the same single-consumer contract pico-doom's pollMouse()
+// relies on.
+// ---------------------------------------------------------------------------
+
+// Motion older than this is dropped rather than handed over. In game and in the
+// menus Duke reads every frame; a longer gap means nothing was reading -- a level
+// loading, the title screen -- and the mouse moved meanwhile would arrive as one
+// sudden spin.
+constexpr uint32_t kMouseStaleUs = 250000;
+
+void readmousexy(short *x, short *y)
+{
+    io::MouseState &m = io::getCurrentMouseState();
+    int32_t dx = m.dx, dy = m.dy;
+    m.dx = m.dy = 0;
+#if DUKE_HAS_SNES_MOUSE
+    dx += snesMouseTake(0);
+    dy += snesMouseTake(1);
+#endif
+
+    static uint32_t last_us;
+    const uint32_t now = time_us_32();
+    if (now - last_us > kMouseStaleUs) dx = dy = 0;
+    last_us = now;
+
+    // << 2 is SDL display.c's own scaling, so Duke's sensitivity bars keep the
+    // meaning they were tuned for: one count turns one BUILD angle unit (of 2048)
+    // at the default setting. Clamped so the shift still fits a short.
+    if (dx > 8191) dx = 8191; else if (dx < -8191) dx = -8191;
+    if (dy > 8191) dy = 8191; else if (dy < -8191) dy = -8191;
+    if (x) *x = (short)(dx << 2);
+    if (y) *y = (short)(dy << 2);
+}
+
+// Duke's button bits are SDL 1.2's, which numbered the wheel as buttons 4 and 5:
+// 0 left, 1 right, 2 middle, 3 wheel up, 4 wheel down, 5-6 the side buttons --
+// the order Options -> Setup Mouse -> Button Setup names them in. The wheel bits
+// are one-shot, set for a single read per scroll, as SDL display.c made them;
+// CONTROL_GetInput() turns that into one press of whatever they are bound to,
+// and probe() into one step of the menu cursor.
+void readmousebstatus(short *bstatus)
+{
+    io::MouseState &m = io::getCurrentMouseState();
+    short b = m.buttons & 0x07;              // HID: left, right, middle
+    if (m.buttons & 0x08) b |= 0x20;         // HID button 4 (back)
+    if (m.buttons & 0x10) b |= 0x40;         // HID button 5 (forward)
+    if (m.wheel > 0)      b |= 0x08;         // HID wheel: positive = away = up
+    else if (m.wheel < 0) b |= 0x10;
+    m.wheel = 0;
+#if DUKE_HAS_SNES_MOUSE
+    b |= snesButtons;                        // left, right
+#endif
+#if DUKE_PAD_DIAG
+    {
+        static short prev_diag = -1;
+        if (b != prev_diag)
+        {
+            prev_diag = b;
+            printf("mouse: usb=%02x", (unsigned)m.buttons);
+#if DUKE_HAS_SNES_MOUSE
+            printf(" snes=%02x", (unsigned)snesButtons);
+#endif
+            printf(" -> %02x\n", (unsigned)b);
+        }
+    }
+#endif
+    if (bstatus) *bstatus = b;
 }

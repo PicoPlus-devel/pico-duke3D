@@ -108,9 +108,8 @@
 #define DUKE_VU_WS2812_PIN 32
 
 // --- USB host on Pico-PIO-USB -----------------------------------------------
-// Marker only in M0: selects the "retask PLL_USB as the fixed 126 MHz clk_hstx
-// source" clock path (see pico_main.c). The USB host stack itself is wired up
-// in the input milestone (M3).
+// Selects the Pico-PIO-USB host stack (duke_usb_input.cpp). The clock path no
+// longer depends on it: duke_boot.c picks it from the CPU clock.
 #define HAS_USBPIO
 #define PIN_USB_HOST_DP (1u)
 #define PIN_USB_HOST_DM (2u)

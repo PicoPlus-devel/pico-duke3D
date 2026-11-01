@@ -789,6 +789,35 @@ void CONFIG_ReadSetup( void )
 				CONFIG_SetupMouse(scripthandle);
 			}
       }
+
+#ifdef PLATFORM_PICO
+   // Mouse defaults, applied once. They cannot simply be the values used when a
+   // key is missing: CONFIG_WriteSetup() writes every MouseButtonN on every exit,
+   // empty while nothing was bound, so each duke3d.cfg from before the mouse
+   // worked already says "no bindings". PicoMouseDefaults marks a config that
+   // has had them; after that, whatever the player sets in Setup Mouse (or with
+   // U for aiming) is what is kept.
+   dummy = 0;
+   SCRIPT_GetNumber( scripthandle, "Controls", "PicoMouseDefaults", &dummy);
+   if (!dummy)
+   {
+      int32 i;
+      for (i = 0; i < MAXMOUSEBUTTONS; i++)
+         MouseMapping[i] = -1;
+      MouseMapping[0] = gamefunc_Fire;            // left
+      MouseMapping[1] = gamefunc_Open;            // right
+      MouseMapping[2] = gamefunc_Jump;            // middle
+      MouseMapping[3] = gamefunc_Previous_Weapon; // wheel up
+      MouseMapping[4] = gamefunc_Next_Weapon;     // wheel down
+      for (i = 0; i < MAXMOUSEAXES; i++)
+         MouseDigitalAxeMapping[i][0] = MouseDigitalAxeMapping[i][1] = -1;
+      // Mouse look on: player.c ignores mouse Y altogether otherwise (FIX_00021).
+      // Toggle mode, so U and the menu can turn it off again.
+      MouseAiming = 0;
+      myaimmode = 1;
+      ps[0].aim_mode = 1;
+   }
+#endif
    setupread = 1;
    }
 
@@ -860,6 +889,10 @@ void CONFIG_WriteSetup( void )
 		SCRIPT_PutString(scripthandle, "Controls", (char *)tempbuf, 
 			(MouseDigitalAxeMapping[i>>1][i&1]!=-1)?CONFIG_FunctionNumToName(MouseDigitalAxeMapping[i>>1][i&1]):"");
 	}
+#ifdef PLATFORM_PICO
+	// See CONFIG_ReadSetup(): the mouse defaults have been applied to this config.
+	SCRIPT_PutNumber( scripthandle, "Controls", "PicoMouseDefaults", 1, false, false);
+#endif
 
    for(i=0; i<NUMGAMEFUNCTIONS; i++) // write keys
    {

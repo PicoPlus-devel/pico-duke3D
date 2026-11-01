@@ -6,8 +6,9 @@
 //  320x200); _nextpage() palette-expands it to an RGB555 intermediate that the
 //  HSTX scanline callback (core1) scales to 640x480 and scans out. Timer logic
 //  is ported straight from display.c with TIMER_GetPlatformTicks() on the
-//  RP2350 microsecond clock. Input (keyboard/mouse) is stubbed for M2 — the
-//  Duke logo/title/demo sequence advances on totalclock alone.
+//  RP2350 microsecond clock. Keyboard, pad and mouse input come from
+//  duke_usb_input.cpp: keys are posted here as scancodes, the mouse is read by
+//  the engine through readmousexy()/readmousebstatus() over there.
 //
 #include <stdint.h>
 #include <stdlib.h>
@@ -218,6 +219,8 @@ static void init_new_res_vars(void)
     setbrightness(curbrightness, palette);
 
     if (searchx < 0) { searchx = halfxdimen; searchy = (ydimen >> 1); }
+
+    setupmouse();
 }
 
 int32_t _setgamemode(uint8_t davidoption, int32_t daxdim, int32_t daydim)
@@ -505,11 +508,17 @@ void setcolor16(uint8_t color) { (void)color; }
 void clear2dscreen(void) { }
 
 // ---------------------------------------------------------------------------
-// Input stubs
+// Input
 // ---------------------------------------------------------------------------
-int  setupmouse(void) { return 0; }
-void readmousexy(short *x, short *y) { if (x) *x = 0; if (y) *y = 0; }
-void readmousebstatus(short *b) { if (b) *b = 0; }
+// Ported from display.c: getmousevalues() returns zeros until moustat is set,
+// and nothing in the game calls initmouse(), so SDL's setupmouse() set it itself
+// from init_new_res_vars(). Same here. readmousexy() and readmousebstatus() are
+// in duke_usb_input.cpp, next to the USB and SNES mice they read.
+int setupmouse(void)
+{
+    moustat = 1;
+    return 1;
+}
 uint8_t _readlastkeyhit(void) { return s_lastkey; }
 void initkeys(void) { }
 void uninitkeys(void) { }

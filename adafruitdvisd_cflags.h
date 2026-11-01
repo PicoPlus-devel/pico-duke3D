@@ -25,9 +25,8 @@
 //                         board points here first.
 //   HAS_USBPIO absent  -> USB host runs on the RP2350's NATIVE controller
 //                         (tusb_config.h picks rhport 0; gamepads and keyboards
-//                         need an OTG adapter). That also forces clk_hstx off
-//                         clk_sys instead of a retasked PLL_USB — see
-//                         duke_boot.c. Build with -DENABLE_PIO_USB=0 to match.
+//                         need an OTG adapter). Build with -DENABLE_PIO_USB=0
+//                         to match.
 //                         (BoardConfigs also offers PIO-USB on this board with
 //                         D+ on GPIO 20; deliberately unused, as in pico-doom.)
 //   DUKE_AUDIO_I2S_DRIVER 2 -> PCM5100A, no codec, no headphone detect, so
@@ -140,11 +139,15 @@
 #define NES_PIN_DATA_1 10
 #define NES_PIN_LAT_1 11
 #define NES_PIO_1 pio1
+// An original SNES Mouse in either port, merged with a USB mouse in
+// duke_usb_input.cpp. Each read clocks 32 bits instead of 18 (about 390 us
+// instead of 220 us), well inside the 2 ms between two polls.
+#define NESPAD_SNES_MOUSE 1
 
 // --- USB host ----------------------------------------------------------------
 // NO HAS_USBPIO / PIN_USB_HOST_* on purpose: tusb_config.h sees HAS_USBPIO
-// undefined and selects the native RP2350 controller (rhport 0), and
-// duke_boot.c takes the clk_sys-derived clk_hstx branch because PLL_USB has to
-// stay at its stock 48 MHz for that controller.
+// undefined and selects the native RP2350 controller (rhport 0). Its 48 MHz
+// is divided from PLL_SYS at 384 MHz, so duke_boot.c can still use PLL_USB as
+// the 126 MHz clk_hstx source.
 
 #endif // DUKE3D_ADAFRUITDVISD_CFLAGS_H
