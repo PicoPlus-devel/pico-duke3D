@@ -4,6 +4,18 @@ Add a section per release, headed with the tag. `release-notes.sh` extracts the
 section matching the tag being released and puts it in the GitHub release body,
 so keep the heading text exactly the tag name.
 
+## v0.6
+
+### Added
+
+- **DVI display mode**, for monitors and TVs that do not accept an HDMI signal. Choose
+  HDMI or DVI under *Options → Display*; the picture switches at once and the choice is
+  kept on the SD card. DVI carries no sound: it plays on the board's own audio output
+  instead (on the Fruit Jam the speaker, or the headphones when plugged in). The
+  Murmulator M2 starts in DVI until another mode is chosen.
+- Started from [pico-bootLoader](https://github.com/PicoPlus-devel/pico-bootLoader),
+  the game uses the display mode set in the bootloader's menu.
+
 ## v0.5
 
 ### Added

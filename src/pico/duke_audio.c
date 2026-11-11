@@ -27,6 +27,12 @@
 //  its PWM audio jack: every HDMI sample is also handed to pwm_audio, which
 //  therefore runs at the HDMI pace.
 //
+//  DVI display mode carries no audio, and the HSTX driver does not take data
+//  islands from the queue then, so nothing goes to HDMI in it: the samples go
+//  to I2S (on the Fruit Jam to its speaker, or the headphones while they are
+//  plugged in), and on a board without I2S to the PWM jack, which then paces
+//  the mixer by its own fill level. HDMI mode is as described above.
+//
 //  DisableInterrupts/RestoreInterrupts (no-ops in the SDL build's dsl.c) are
 //  implemented as real IRQ save/disable here: they are what protects the
 //  multivoc voice list from the timer-IRQ pump on core0.
@@ -85,6 +91,17 @@ void     RestoreInterrupts(uint32_t flags);
 typedef enum { SINK_HDMI = 0, SINK_HEADPHONES = 1 } sink_t;
 static volatile sink_t s_sink = SINK_HDMI;
 static bool s_i2s_ok = false;
+// DVI display mode: no audio on the cable (duke_audio_set_dvi, core0).
+static volatile bool s_dvi = false;
+// Exclusive-sink boards: headphones plugged in, and the sink and speaker
+// still to be set for a change of either (duke_audio_poll_headphone).
+static bool s_hp_in = false;
+static volatile bool s_route_dirty = true;
+
+// PWM jack fill the mixer keeps in DVI mode on a board without I2S: half the
+// 2048-frame ring, where the jack starts playing; with a division on top it
+// stays below the 3/4 at which pwm_audio drops samples.
+#define PUMP_TARGET_PWM_FILL 1024
 
 // ---------------------------------------------------------------------------
 // Mixer hookup (set by DSL_BeginBufferedPlayback)
@@ -143,7 +160,10 @@ static inline void __not_in_flash_func(emit_sample)(int16_t l, int16_t r, sink_t
     (void)sink;
     if (s_i2s_ok)
         audio_i2s_enqueue_sample(((uint32_t)(uint16_t)l << 16) | (uint16_t)r);
-    hstx_push_audio_sample(l, r);
+    if (!s_dvi)
+        hstx_push_audio_sample(l, r);   // HDMI, and the PWM jack with it
+    else
+        pwm_audio_push(l, r);           // DVI: no HDMI audio (no-op without a jack)
 #endif
 }
 
@@ -211,13 +231,22 @@ static inline bool __not_in_flash_func(sink_at_target)(sink_t sink, int frames_p
     return hstx_di_queue_get_level() >= PUMP_TARGET_DI_LEVEL;
 #else
     (void)sink;
-    if (hstx_di_queue_get_level() >= PUMP_TARGET_DI_LEVEL)
+    const bool dvi = s_dvi;
+    if (!dvi && hstx_di_queue_get_level() >= PUMP_TARGET_DI_LEVEL)
         return true;
     if (s_i2s_ok) {
         const int free = audio_i2s_get_freebuffer_size();
         if ((I2S_AUDIO_RING_SIZE - free) >= PUMP_TARGET_I2S_QUEUED ||
             free < frames_per_div)
             return true;
+    } else if (dvi) {
+        // DVI without I2S: only the PWM jack plays, so it paces the mixer.
+        // With no jack either there is no output at all: do not mix.
+#if PWM_AUDIO_IS_ENABLED
+        return pwm_audio_get_fill() >= PUMP_TARGET_PWM_FILL;
+#else
+        return true;
+#endif
     }
     return false;
 #endif
@@ -235,7 +264,7 @@ static inline bool __not_in_flash_func(sink_starved)(sink_t sink)
     return (sink == SINK_HEADPHONES) ? i2s_low : di_low;
 #else
     (void)sink;
-    return i2s_low || di_low;
+    return i2s_low || (!s_dvi && di_low);
 #endif
 }
 
@@ -473,20 +502,40 @@ void duke_audio_poll_headphone(void)
 #if !DUKE_AUDIO_EXCLUSIVE_SINK
     // No codec / no detect pin: both sinks are always live, nothing to switch.
     // (tlv320_poll_headphone would short-circuit on !s_active anyway; skipping
-    // the call keeps the frame loop honest about what this board can do.)
+    // the call keeps the frame loop honest about what this board can do.) The
+    // display mode needs nothing here either: the pump reads s_dvi itself.
     return;
 #else
     if (!s_i2s_ok) return;
     enum headphone_toggle_t ev = tlv320_poll_headphone();
-    if (ev == HP_TOGGLE_CONNECT) {
-        s_sink = SINK_HEADPHONES;
-        printf("audio: headphones CONNECT -> I2S (HDMI muted)\n");
-    } else if (ev == HP_TOGGLE_DISCONNECT) {
-        s_sink = SINK_HDMI;
-        audio_i2s_muteInternalSpeaker(true);   // spec: speaker never plays
-        printf("audio: headphones DISCONNECT -> HDMI\n");
+    if (ev == HP_TOGGLE_CONNECT || ev == HP_TOGGLE_DISCONNECT) {
+        s_hp_in = (ev == HP_TOGGLE_CONNECT);
+        printf("audio: headphones %s\n", s_hp_in ? "CONNECT" : "DISCONNECT");
+        s_route_dirty = true;
+    }
+    if (!s_route_dirty) return;
+    s_route_dirty = false;
+    // HDMI mode: the monitor plays unless headphones are plugged in, and the
+    // speaker never does (spec). DVI mode has no audio on the cable: I2S always,
+    // to the speaker unless headphones are plugged in (the codec mutes it for
+    // them itself).
+    const bool dvi = s_dvi;
+    const sink_t sink = (dvi || s_hp_in) ? SINK_HEADPHONES : SINK_HDMI;
+    audio_i2s_muteInternalSpeaker(!dvi || s_hp_in);
+    if (sink != s_sink) {
+        s_sink = sink;
+        printf("audio: -> %s\n", sink == SINK_HDMI ? "HDMI"
+               : s_hp_in ? "I2S headphones (HDMI muted)" : "I2S speaker (DVI)");
     }
 #endif
+}
+
+// The display mode (pico_display.c, core0): at video start and on a switch
+// from the OPTIONS menu. The sink and speaker follow at the next headphone poll.
+void duke_audio_set_dvi(bool dvi)
+{
+    s_dvi = dvi;
+    s_route_dirty = true;
 }
 
 // ---------------------------------------------------------------------------
@@ -522,11 +571,12 @@ int DSL_Init(void)
     // clk_sys and its interrupt runs on the core that calls this, while the
     // samples arrive from the core1 pump.
     pwm_audio_init(DUKE_AUDIO_RATE);
-    printf("audio: DSL_Init ok (%d Hz, sinks=%s)\n", DUKE_AUDIO_RATE,
-           DUKE_AUDIO_EXCLUSIVE_SINK ? "HDMI or headphones (jack detect)"
+    printf("audio: DSL_Init ok (%d Hz, sinks=%s, %s mode)\n", DUKE_AUDIO_RATE,
+           DUKE_AUDIO_EXCLUSIVE_SINK ? "HDMI or I2S (jack detect)"
            : DUKE_AUDIO_HAS_I2S      ? "HDMI + I2S"
            : PWM_AUDIO_IS_ENABLED    ? "HDMI + PWM jack"
-                                     : "HDMI");
+                                     : "HDMI",
+           s_dvi ? "DVI" : "HDMI");
     return DSL_Ok;
 }
 

@@ -38,11 +38,16 @@ extern "C" {
 void pwm_audio_init(uint32_t sample_rate);
 /* Signed 16-bit samples. Safe from either core, one producer at a time. */
 void pwm_audio_push(int left, int right);
+/* Frames waiting in the ring. For a producer that has no HDMI audio to pace it
+   (DVI display mode) and keeps the ring near half full by itself. Local
+   addition in pico-duke3D and pico-doom, not in pico_shared. */
+uint32_t pwm_audio_get_fill(void);
 #else
 /* No PWM jack: no-ops that compile away, so hstx_push_audio_sample(), which
    runs from SRAM, does not call into flash for every sample. */
 static inline void pwm_audio_init(uint32_t sample_rate) { (void)sample_rate; }
 static inline void pwm_audio_push(int left, int right) { (void)left; (void)right; }
+static inline uint32_t pwm_audio_get_fill(void) { return 0; }
 #endif
 
 #ifdef __cplusplus

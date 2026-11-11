@@ -428,6 +428,22 @@ continues. And the image will look slightly tall in a viewer, because the pixels
 square: a viewer that takes the 320×200 size literally will stretch the 4:3 picture seen
 on the screen.
 
+## Display mode
+
+The HDMI connector sends either an HDMI or a DVI signal. HDMI carries picture and sound.
+DVI carries the picture only and is meant for monitors and TVs that do not accept an HDMI
+signal; the sound then plays on the board's own audio output only (the speaker of the
+Fruit Jam or headphones while they are plugged in, the audio module or audio jack on the
+other boards, see [Which board](#which-board)).
+
+The mode is set under **OPTIONS → DISPLAY**. The picture switches at once, and the choice
+is stored in `/settings_DUKE3D.dat` on the SD card. Without a stored choice the Murmulator
+M2 starts in DVI and the other boards in HDMI.
+
+When the game is started from [pico-bootLoader](https://github.com/PicoPlus-devel/pico-bootLoader),
+it uses the display mode set in the bootloader's menu (`DISPLAY=` in `/boot.txt`) instead. A
+change made in the game then applies until the next start.
+
 ## Bootsel mode
 
 **OPTIONS → BOOTSEL MODE** restarts the board as the USB drive you flash firmware onto,

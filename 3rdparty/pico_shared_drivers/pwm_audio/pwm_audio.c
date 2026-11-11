@@ -73,6 +73,11 @@ void __not_in_flash_func(pwm_audio_push)(int left, int right)
     wr_idx = w;
 }
 
+uint32_t __not_in_flash_func(pwm_audio_get_fill)(void)
+{
+    return wr_idx - rd_idx;
+}
+
 void pwm_audio_init(uint32_t sample_rate)
 {
     if (initialized)

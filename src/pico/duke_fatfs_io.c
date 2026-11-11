@@ -39,6 +39,7 @@
 #include "ff.h"
 #include "tf_card.h"
 #include "duke_fatal.h"
+#include "duke_settings.h"
 
 #define DUKE_MAXFDS  16
 #define DUKE_FD_BASE 3    // keep clear of stdio fds 0/1/2
@@ -81,6 +82,9 @@ void duke_fatfs_init(void)
                    "Insert a FAT/exFAT-formatted card with\n"
                    "DUKE3D.GRP in /roms/duke3d.", fr);
     }
+    // Before the display starts (duke_boot.c), so it starts in the right mode,
+    // and before the checks below, so their screens show in it.
+    duke_settings_load();
     fr = f_chdir(DUKE_ASSET_DIR);
     if (fr != FR_OK) {
         printf("duke_fatfs: chdir %s FAILED (%d)\n", DUKE_ASSET_DIR, fr);

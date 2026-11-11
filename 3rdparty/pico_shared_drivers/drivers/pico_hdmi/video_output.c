@@ -9,6 +9,7 @@
 #include "hardware/dma.h"
 #include "hardware/gpio.h"
 #include "hardware/irq.h"
+#include "hardware/resets.h"
 #include "hardware/structs/bus_ctrl.h"
 #include "hardware/structs/clocks.h"
 #include "hardware/structs/hstx_ctrl.h"
@@ -75,11 +76,48 @@ volatile uint32_t video_frame_count = 0;
 
 #if HSTX_DEBUG
 static volatile uint32_t irq_count = 0;
+// Pixel runs whose channel had already restarted before the IRQ reloaded it
+// (one shifted line each, see vactive_line_dvi).
+static volatile uint32_t late_pixel_reloads = 0;
 #endif
 
 // DVI mode: when true, disables all HDMI Data Islands (pure DVI output, no audio)
 // Some monitors have trouble syncing with HDMI Data Islands
 static bool dvi_mode = false; // Default to HDMI mode (full features with audio)
+
+// What DVI mode actually puts on the wire.
+//
+//   0 (default) real DVI 1.0 -- sync symbols only, no data-island preamble, no
+//               TERC4 island, no video preamble or guard band. What DVI mode
+//               emitted up to v0.42.
+//   1           "silent HDMI" -- the HDMI cmdlist shape carrying a null DI
+//               packet. Introduced in v0.43 and made unconditional there.
+//
+// v0.43 switched everyone to 1 because the uniform 96-cycle hsync of real DVI
+// outran the TMDS clock-recovery PLL on some sinks, which then needed the
+// watchdog to resync. But a DVI 1.0 receiver has no rule for TERC4 in the
+// blanking interval, so that change made DVI-only monitors reject the signal
+// outright (issue #217: BenQ FP72E and Dell 1908FPb, both no picture at all).
+// Adding the AVI InfoFrame to the island stream did not help them, so the
+// objection is to the islands themselves, not to a missing InfoFrame -- there
+// is no single bitstream that satisfies both kinds of sink.
+//
+// The resyncs themselves were not the sink's doing: no sink can make the
+// watchdogs fire. Real DVI's 9-word blank line left the DMA IRQ 0.7 us at the
+// end of each frame, and the data island stretched that (see
+// vblank_line_first_dvi, which now gives real DVI ~12 us). The 9-word active
+// line had the same 0.7 us on every line, which showed as single lines
+// shifted to the right (see vactive_line_dvi, now ~5 us).
+//
+// 1 is kept for reference only -- do not reach for it. It is not DVI, so it
+// buys a sink nothing that Display Mode = HDMI does not already give: that
+// sends the same island structure with real packets, and carries audio too.
+// A display that cannot hold sync on real DVI should simply be run in HDMI
+// mode. Hence 0 is the default and there is no reason for a shared-driver
+// consumer to override it.
+#ifndef PICO_HDMI_DVI_USE_DATA_ISLANDS
+#define PICO_HDMI_DVI_USE_DATA_ISLANDS 0
+#endif
 
 // Double-buffered line buffer. While DMA reads line_buffer[dma_idx] for the
 // current active line, the scanline callback fills line_buffer[fill_idx] with
@@ -128,11 +166,67 @@ static uint32_t vblank_line_vsync_on[] = {HSTX_CMD_RAW_REPEAT | MODE_H_FRONT_POR
                                           SYNC_V0_H1,
                                           HSTX_CMD_NOP};
 
-// Active video line for DVI mode (no Data Island, just sync + pixels)
+// Active video line for DVI mode (no Data Island, just sync + pixels), with
+// the back porch sent as three runs of 16. The output is the same as one run
+// of 48: the same control symbols, still plain DVI.
+//
+// Each active line is two DMA runs on alternating channels: this list, then
+// the 320 pixel words. When the pixel run of line N completes, the other
+// channel starts this list for line N+1, and the pixel channel is re-triggered
+// as soon as the list completes. The IRQ for the completed pixel run has to
+// point the pixel channel at the new line buffer before that (see
+// vblank_line_first_dvi for the same timing at the end of a frame). As a
+// 9-word list with one back-porch run, it completed ~17 pixel clocks (0.7 us)
+// after the pixel run. When the IRQ was later, the channel restarted with its
+// pixel settings from the end of the previous line buffer, sent ~3 stale words
+// before the IRQ moved its read address, and that line was shown ~6 pixels to
+// the right. The word count stays at 320, so the stream stays in phase; the
+// result was a single shifted line a few times per second, never a sync loss.
+//
+// Split like this, the list completes when its first back-porch command
+// leaves the FIFO, front porch plus hsync into the line. That gives the IRQ
+// ~128 pixel clocks (~5 us), more than HDMI mode's ~2.9 us, which never
+// showed the shifted lines. The 8 words still in the FIFO then cover the
+// 48-pixel back porch, so the pixel DMA has ~1.9 us to deliver its first word
+// before the TMDS run starts. The render IRQ that follows starts later by the
+// same amount as its deadline, so its budget is unchanged.
+#define BACK_PORCH_RUN (MODE_H_BACK_PORCH / 3)
+_Static_assert(MODE_H_BACK_PORCH % 3 == 0, "back porch must split evenly");
 static uint32_t vactive_line_dvi[] = {
     HSTX_CMD_RAW_REPEAT | MODE_H_FRONT_PORCH, SYNC_V1_H1, HSTX_CMD_NOP,
     HSTX_CMD_RAW_REPEAT | MODE_H_SYNC_WIDTH,  SYNC_V1_H0, HSTX_CMD_NOP,
-    HSTX_CMD_RAW_REPEAT | MODE_H_BACK_PORCH,  SYNC_V1_H1, HSTX_CMD_TMDS | MODE_H_ACTIVE_PIXELS};
+    HSTX_CMD_RAW_REPEAT | BACK_PORCH_RUN,     SYNC_V1_H1, HSTX_CMD_NOP,
+    HSTX_CMD_RAW_REPEAT | BACK_PORCH_RUN,     SYNC_V1_H1, HSTX_CMD_NOP,
+    HSTX_CMD_RAW_REPEAT | BACK_PORCH_RUN,     SYNC_V1_H1, HSTX_CMD_TMDS | MODE_H_ACTIVE_PIXELS};
+
+// First blank line after the active area in DVI mode: the same symbols as
+// vblank_line_vsync_off, with the 688-pixel run sent as four runs of 172.
+//
+// dma_irq_handler reprograms a channel for its run after next, and that
+// channel is re-triggered as soon as the other channel's run completes, which
+// is when its last word enters the 8-word HSTX FIFO. A 9-word blank line after
+// the last pixel run of a frame completes ~18 pixel clocks (0.7 us) after that
+// pixel run, so the IRQ had 0.7 us to load the pixel channel with line 1. When
+// it was later, the channel restarted with its pixel settings (320 words from
+// the end of the line buffer), the HSTX executed pixel data as commands and
+// the output fell out of phase (the over-rate watchdog's ~160 fps). Core 1
+// streaming CD audio (FLAC decoding, SD and PSRAM access from flash code)
+// takes that long to enter the IRQ in a few percent of frames, which made a
+// CHD game resync every second or so.
+//
+// Split like this, line 0 completes ~284 pixel clocks into the line. That
+// gives the IRQ loading line 1 ~12 us and the one loading line 2 ~20 us. In
+// HDMI mode the 32-word data island on every blank line has a similar effect
+// (~2.9 us here).
+#define FIRST_BLANK_RUN ((MODE_H_BACK_PORCH + MODE_H_ACTIVE_PIXELS) / 4)
+_Static_assert((MODE_H_BACK_PORCH + MODE_H_ACTIVE_PIXELS) % 4 == 0, "first blank line must split evenly");
+static uint32_t vblank_line_first_dvi[] = {
+    HSTX_CMD_RAW_REPEAT | MODE_H_FRONT_PORCH, SYNC_V1_H1, HSTX_CMD_NOP,
+    HSTX_CMD_RAW_REPEAT | MODE_H_SYNC_WIDTH,  SYNC_V1_H0, HSTX_CMD_NOP,
+    HSTX_CMD_RAW_REPEAT | FIRST_BLANK_RUN,    SYNC_V1_H1, HSTX_CMD_NOP,
+    HSTX_CMD_RAW_REPEAT | FIRST_BLANK_RUN,    SYNC_V1_H1, HSTX_CMD_NOP,
+    HSTX_CMD_RAW_REPEAT | FIRST_BLANK_RUN,    SYNC_V1_H1, HSTX_CMD_NOP,
+    HSTX_CMD_RAW_REPEAT | FIRST_BLANK_RUN,    SYNC_V1_H1, HSTX_CMD_NOP};
 
 static uint32_t vactive_di_ping[128], vactive_di_pong[128], vactive_di_null[128];
 static uint32_t vactive_di_len, vactive_di_null_len;
@@ -155,9 +249,127 @@ static uint32_t vblank_infoframe_vsync_off[64], vblank_infoframe_vsync_off_len;
 static uint32_t vblank_avi_infoframe[64], vblank_avi_infoframe_len;
 
 // ============================================================================
-// HSTX Resync - Reset output to sync with input VSYNC
+// HSTX bring-up and resync
 // ============================================================================
 
+// Point one HSTX output pair (P on bit, N on its neighbour) at TMDS lane `lane`.
+// Inline expressions rather than a lookup table: this runs from SRAM on the
+// resync path, and a const table would live in flash.
+static inline void __not_in_flash_func(hstx_set_lane)(uint lane, int bit)
+{
+    int bit_dn = GPIOHSTXINVERTED ? (bit - 1) : (bit + 1);
+    // Output even bits during the first half of each HSTX cycle and odd bits
+    // during the second half; the shifter advances by two bits each cycle.
+    uint32_t sel = (lane * 10) << HSTX_CTRL_BIT0_SEL_P_LSB | (lane * 10 + 1) << HSTX_CTRL_BIT0_SEL_N_LSB;
+    // The two halves of each pair get identical data, but one pin is inverted.
+    hstx_ctrl_hw->bit[bit] = sel;
+    hstx_ctrl_hw->bit[bit_dn] = sel | HSTX_CTRL_BIT0_INV_BITS;
+}
+
+// Reset the HSTX block and program it for the video mode, output disabled.
+//
+// Clearing CSR.EN is not enough to restart the output: with EN low the HSTX
+// merely stops popping its FIFO. The FIFO keeps up to 8 words of the old
+// stream and the command expander stays wherever it was inside the current
+// command (part way through a TMDS run of 320 pixel words, or with a
+// RAW_REPEAT still waiting for its data word). Re-enabling then consumes the
+// start of the new stream as the tail of the old command, and every later
+// word is parsed out of phase: pixel and sync words are executed as commands,
+// the FIFO drains far faster than the pixel clock allows (~160 "frames" per
+// second, which is what the over-rate watchdog sees) and the IRQ handler can
+// no longer keep the DMA chain fed. A resync that only toggled EN then put the
+// new stream behind the same stale state, so the watchdog fired every second
+// without ever recovering. Only a block reset empties the FIFO and returns
+// the expander to a command boundary.
+//
+// Every DMA channel feeding the FIFO must be stopped before this is called.
+static void __not_in_flash_func(hstx_configure)(void)
+{
+    reset_block_mask(RESETS_RESET_HSTX_BITS);
+    unreset_block_mask_wait_blocking(RESETS_RESET_HSTX_BITS);
+
+#if 0
+    hstx_ctrl_hw->expand_tmds = 4 << HSTX_CTRL_EXPAND_TMDS_L2_NBITS_LSB | 8 << HSTX_CTRL_EXPAND_TMDS_L2_ROT_LSB |
+                                5 << HSTX_CTRL_EXPAND_TMDS_L1_NBITS_LSB | 3 << HSTX_CTRL_EXPAND_TMDS_L1_ROT_LSB |
+                                4 << HSTX_CTRL_EXPAND_TMDS_L0_NBITS_LSB | 13 << HSTX_CTRL_EXPAND_TMDS_L0_ROT_LSB;
+
+    hstx_ctrl_hw->expand_shift =
+        2 << HSTX_CTRL_EXPAND_SHIFT_ENC_N_SHIFTS_LSB | 16 << HSTX_CTRL_EXPAND_SHIFT_ENC_SHIFT_LSB |
+        1 << HSTX_CTRL_EXPAND_SHIFT_RAW_N_SHIFTS_LSB | 0 << HSTX_CTRL_EXPAND_SHIFT_RAW_SHIFT_LSB;
+#else
+    // Configure HSTX's TMDS encoder for RGB555
+    hstx_ctrl_hw->expand_tmds =
+        29 << HSTX_CTRL_EXPAND_TMDS_L0_ROT_LSB |
+        4 << HSTX_CTRL_EXPAND_TMDS_L0_NBITS_LSB |
+        2 << HSTX_CTRL_EXPAND_TMDS_L1_ROT_LSB |
+        4 << HSTX_CTRL_EXPAND_TMDS_L1_NBITS_LSB |
+        7 << HSTX_CTRL_EXPAND_TMDS_L2_ROT_LSB |
+        4 << HSTX_CTRL_EXPAND_TMDS_L2_NBITS_LSB;
+    // Pixels (TMDS) come in 4 8-bit chunks. Control symbols (RAW) are an
+    // entire 32-bit word.
+    hstx_ctrl_hw->expand_shift =
+        2 << HSTX_CTRL_EXPAND_SHIFT_ENC_N_SHIFTS_LSB |
+        16 << HSTX_CTRL_EXPAND_SHIFT_ENC_SHIFT_LSB |
+        1 << HSTX_CTRL_EXPAND_SHIFT_RAW_N_SHIFTS_LSB |
+        0 << HSTX_CTRL_EXPAND_SHIFT_RAW_SHIFT_LSB;
+#endif
+
+    int clk_bit_p = HSTX_BIT_FROM_GPIO(GPIOHSTXCK);
+    int clk_bit_n = GPIOHSTXINVERTED ? (clk_bit_p - 1) : (clk_bit_p + 1);
+    hstx_ctrl_hw->bit[clk_bit_p] = HSTX_CTRL_BIT0_CLK_BITS;
+    hstx_ctrl_hw->bit[clk_bit_n] = HSTX_CTRL_BIT0_CLK_BITS | HSTX_CTRL_BIT0_INV_BITS;
+
+    // TMDS lane Dn+ goes to GPIOHSTXDn, Dn- to the neighbouring pin (below it
+    // when GPIOHSTXINVERTED is set, above it otherwise). Example, Adafruit
+    // Metro RP2350: D0 = GPIO18/19, D1 = GPIO16/17, D2 = GPIO12/13, see
+    // https://learn.adafruit.com/adafruit-metro-rp2350/pinouts#hstx-connector-3193107
+    hstx_set_lane(0, HSTX_BIT_FROM_GPIO(GPIOHSTXD0));
+    hstx_set_lane(1, HSTX_BIT_FROM_GPIO(GPIOHSTXD1));
+    hstx_set_lane(2, HSTX_BIT_FROM_GPIO(GPIOHSTXD2));
+
+    // EN stays low until start_output(), so nothing is shifted out before the
+    // DMA chain is in place.
+    hstx_ctrl_hw->csr = HSTX_CTRL_CSR_EXPAND_EN_BITS | (uint32_t)MODE_HSTX_CSR_CLKDIV << HSTX_CTRL_CSR_CLKDIV_LSB |
+                        5U << HSTX_CTRL_CSR_N_SHIFTS_LSB | 2U << HSTX_CTRL_CSR_SHIFT_LSB;
+}
+
+// Start the output at the top of a frame, from a freshly configured HSTX and
+// stopped DMA channels. PING and PONG are loaded with the first two (blank)
+// lines; dma_irq_handler then programs each channel two transfers ahead,
+// starting with line 2.
+//
+// The scanline state is reset here, not only at boot: a relaunch of core 1
+// (hstx_restart_core1, used around every CHD game) would otherwise inherit
+// whatever video_output_stop() interrupted. A stale dma_pong makes the first
+// IRQ reprogram the running channel instead of the finished one, and a stale
+// vactive_cmdlist_posted makes it queue 320 pixel words behind a blank line,
+// where the HSTX executes them as commands.
+static void __not_in_flash_func(start_output)(void)
+{
+    v_scanline = 2;
+    vactive_cmdlist_posted = false;
+    dma_pong = false;
+    line_buf_fill_idx = 0;
+    line_buf_dma_idx = 0;
+
+    // Clear pending DMA interrupts, including spurious completions that an
+    // abort can latch (RP2350-E5).
+    dma_hw->ints0 = (1U << DMACH_PING) | (1U << DMACH_PONG);
+
+    dma_channel_hw_t *ch_ping = &dma_hw->ch[DMACH_PING];
+    ch_ping->read_addr = (uintptr_t)vblank_line_vsync_off;
+    ch_ping->transfer_count = count_of(vblank_line_vsync_off);
+    dma_channel_hw_t *ch_pong = &dma_hw->ch[DMACH_PONG];
+    ch_pong->read_addr = (uintptr_t)vblank_line_vsync_off;
+    ch_pong->transfer_count = count_of(vblank_line_vsync_off);
+
+    hstx_ctrl_hw->csr |= HSTX_CTRL_CSR_EN_BITS;
+    dma_channel_start(DMACH_PING);
+}
+
+// Rebuild the output from scratch: stop the DMA chain, reset the HSTX, and
+// start again at the top of a frame. Called by the core-1 watchdogs with the
+// DMA IRQ disabled.
 static void __not_in_flash_func(hstx_resync)(void)
 {
     // RP2350-E5: clear EN on the aborted channel AND any channel it chains
@@ -165,46 +377,17 @@ static void __not_in_flash_func(hstx_resync)(void)
     // while abort is in flight and leave it latched live with stale config.
     hw_clear_bits(&dma_hw->ch[DMACH_PING].al1_ctrl, DMA_CH0_CTRL_TRIG_EN_BITS);
     hw_clear_bits(&dma_hw->ch[DMACH_PONG].al1_ctrl, DMA_CH0_CTRL_TRIG_EN_BITS);
-
-    // 1. Abort DMA chains
     dma_channel_abort(DMACH_PING);
     dma_channel_abort(DMACH_PONG);
 
-    // 2. Disable HSTX (resets shift register, clock generator, and flushes FIFO)
-    hstx_ctrl_hw->csr &= ~HSTX_CTRL_CSR_EN_BITS;
+    // Empty the FIFO and reset the command expander (see hstx_configure).
+    hstx_configure();
 
-    // Small delay to ensure HSTX fully stops
-    __asm volatile("nop\nnop\nnop\nnop");
-
-    // 3. Reset state to start of frame
-    v_scanline = 0;
-    vactive_cmdlist_posted = false;
-    dma_pong = false;
-    line_buf_fill_idx = 0;
-    line_buf_dma_idx = 0;
-
-    // 4. Clear any pending DMA interrupts (including spurious completion
-    //    interrupts that abort can latch per RP2350-E5 / SDK docs).
-    dma_hw->ints0 = (1U << DMACH_PING) | (1U << DMACH_PONG);
-
-    // 5. Restore the EN bits cleared above so the channels are live again.
+    // Restore the EN bits cleared above so the channels are live again.
     hw_set_bits(&dma_hw->ch[DMACH_PING].al1_ctrl, DMA_CH0_CTRL_TRIG_EN_BITS);
     hw_set_bits(&dma_hw->ch[DMACH_PONG].al1_ctrl, DMA_CH0_CTRL_TRIG_EN_BITS);
 
-    // 6. Configure DMA PING to start from beginning of frame (Line 0)
-    dma_channel_hw_t *ch_ping = &dma_hw->ch[DMACH_PING];
-    ch_ping->read_addr = (uintptr_t)vblank_line_vsync_off;
-    ch_ping->transfer_count = count_of(vblank_line_vsync_off);
-
-    // 7. Configure DMA PONG for the NEXT line (Line 1)
-    // This ensures that when PING finishes and chains to PONG, PONG is ready.
-    dma_channel_hw_t *ch_pong = &dma_hw->ch[DMACH_PONG];
-    ch_pong->read_addr = (uintptr_t)vblank_line_vsync_off; // Line 1 is also blank
-    ch_pong->transfer_count = count_of(vblank_line_vsync_off);
-
-    // 8. Re-enable HSTX then start DMA
-    hstx_ctrl_hw->csr |= HSTX_CTRL_CSR_EN_BITS;
-    dma_channel_start(DMACH_PING);
+    start_output();
 }
 
 // ============================================================================
@@ -295,15 +478,15 @@ static inline void __not_in_flash_func(get_scanline_state)(uint32_t v_scanline, 
 static inline void __not_in_flash_func(video_output_handle_vsync)(dma_channel_hw_t *ch, uint32_t v_scanline)
 {
     if (dvi_mode) {
-        // DVI mode: use the same HDMI-structured cmdlist (data-island period
-        // + video preamble + guard band) as HDMI mode, but with a null DI
-        // packet so no audio / AVI / ACR data is actually transmitted. The
-        // longer cmdlist produces a much richer control-period before each
-        // active region, which several sinks (notably the Murmulator M2's
-        // monitor) need to maintain TMDS lock — the bare 9-word DVI cmdlist
-        // caused frequent lock loss and watchdog resyncs.
+        // See PICO_HDMI_DVI_USE_DATA_ISLANDS above for why there are two of
+        // these and why the plain DVI line is the default.
+#if PICO_HDMI_DVI_USE_DATA_ISLANDS
         ch->read_addr = (uintptr_t)vblank_di_null_vsync_on;
         ch->transfer_count = vblank_di_null_vsync_on_len;
+#else
+        ch->read_addr = (uintptr_t)vblank_line_vsync_on;
+        ch->transfer_count = count_of(vblank_line_vsync_on);
+#endif
         if (v_scanline == MODE_V_FRONT_PORCH) {
             video_frame_count++;
             if (vsync_callback)
@@ -331,11 +514,13 @@ static inline void __not_in_flash_func(video_output_handle_active_start)(dma_cha
     //    even if the scanline callback below overruns, the cmdlist chain is
     //    safe and HSTX keeps emitting valid sync.
     if (dvi_mode) {
-        // DVI mode: share HDMI's active-line cmdlist (with null DI) so the
-        // sink sees the same control-period structure on every line. See
-        // video_output_handle_vsync for rationale.
+#if PICO_HDMI_DVI_USE_DATA_ISLANDS
         ch->read_addr = (uintptr_t)vactive_di_null;
         ch->transfer_count = vactive_di_null_len;
+#else
+        ch->read_addr = (uintptr_t)vactive_line_dvi;
+        ch->transfer_count = count_of(vactive_line_dvi);
+#endif
     } else {
         uint32_t *buf = dma_pong ? vactive_di_ping : vactive_di_pong;
         const uint32_t *di_words = hstx_di_queue_get_audio_packet();
@@ -365,8 +550,11 @@ static inline void __not_in_flash_func(video_output_handle_active_start)(dma_cha
     if (scanline_callback) {
         scanline_callback(v_scanline, active_line, dst32);
     } else {
+        // Volatile stores, so GCC cannot turn the loop into a call to the
+        // flash-resident memset from inside the IRQ.
+        volatile uint32_t *zp = dst32;
         for (uint32_t i = 0; i < MODE_H_ACTIVE_PIXELS / 2; i++) {
-            dst32[i] = 0;
+            zp[i] = 0;
         }
     }
 }
@@ -374,14 +562,22 @@ static inline void __not_in_flash_func(video_output_handle_active_start)(dma_cha
 static inline void __not_in_flash_func(video_output_handle_blanking)(dma_channel_hw_t *ch, uint32_t v_scanline, bool send_acr, bool dma_pong)
 {
     if (dvi_mode) {
-        // DVI mode: HDMI-structured blanking cmdlist with a null DI packet
-        // (no audio / no ACR / no AVI InfoFrame). See video_output_handle_vsync
-        // for why the cmdlist shape is shared with HDMI mode.
         (void)send_acr;
         (void)dma_pong;
         (void)v_scanline;
+#if PICO_HDMI_DVI_USE_DATA_ISLANDS
         ch->read_addr = (uintptr_t)vblank_di_null;
         ch->transfer_count = vblank_di_null_len;
+#else
+        if (v_scanline == 0) {
+            // Follows the last pixel run of the frame; see vblank_line_first_dvi.
+            ch->read_addr = (uintptr_t)vblank_line_first_dvi;
+            ch->transfer_count = count_of(vblank_line_first_dvi);
+        } else {
+            ch->read_addr = (uintptr_t)vblank_line_vsync_off;
+            ch->transfer_count = count_of(vblank_line_vsync_off);
+        }
+#endif
     } else {
         if (send_acr) {
             ch->read_addr = (uintptr_t)vblank_acr_vsync_off;
@@ -406,6 +602,10 @@ static inline void __not_in_flash_func(video_output_handle_blanking)(dma_channel
 
 static inline void __not_in_flash_func(video_output_handle_active_data)(dma_channel_hw_t *ch)
 {
+#if HSTX_DEBUG
+    if (ch->al1_ctrl & DMA_CH0_CTRL_TRIG_BUSY_BITS)
+        late_pixel_reloads++;
+#endif
     ch->read_addr = (uintptr_t)line_buffer[line_buf_dma_idx];
     ch->transfer_count = (MODE_H_ACTIVE_PIXELS * sizeof(uint16_t)) / sizeof(uint32_t);
 }
@@ -423,6 +623,7 @@ void __not_in_flash_func(dma_irq_handler)(void)
     dma_channel_hw_t *ch = &dma_hw->ch[ch_num];
     dma_hw->intr = 1U << ch_num;
     dma_pong = !dma_pong;
+
 
     // Advance audio/data-island scheduler exactly once per scanline (HDMI mode only)
     if (!dvi_mode && !vactive_cmdlist_posted) {
@@ -656,74 +857,9 @@ void video_output_set_vsync_callback(video_output_vsync_cb_t cb)
 // write -- and would be the same risk as before this attribute was added.
 void __not_in_flash_func(video_output_core1_run)(void)
 {
-#if 0
-    // HSTX Hardware Setup
-    hstx_ctrl_hw->expand_tmds = 4 << HSTX_CTRL_EXPAND_TMDS_L2_NBITS_LSB | 8 << HSTX_CTRL_EXPAND_TMDS_L2_ROT_LSB |
-                                5 << HSTX_CTRL_EXPAND_TMDS_L1_NBITS_LSB | 3 << HSTX_CTRL_EXPAND_TMDS_L1_ROT_LSB |
-                                4 << HSTX_CTRL_EXPAND_TMDS_L0_NBITS_LSB | 13 << HSTX_CTRL_EXPAND_TMDS_L0_ROT_LSB;
-
-    hstx_ctrl_hw->expand_shift =
-        2 << HSTX_CTRL_EXPAND_SHIFT_ENC_N_SHIFTS_LSB | 16 << HSTX_CTRL_EXPAND_SHIFT_ENC_SHIFT_LSB |
-        1 << HSTX_CTRL_EXPAND_SHIFT_RAW_N_SHIFTS_LSB | 0 << HSTX_CTRL_EXPAND_SHIFT_RAW_SHIFT_LSB;
-#else
-     // Configure HSTX's TMDS encoder for RGB555
-    hstx_ctrl_hw->expand_tmds =
-        29 << HSTX_CTRL_EXPAND_TMDS_L0_ROT_LSB |
-        4 << HSTX_CTRL_EXPAND_TMDS_L0_NBITS_LSB |
-        2 << HSTX_CTRL_EXPAND_TMDS_L1_ROT_LSB |
-        4 << HSTX_CTRL_EXPAND_TMDS_L1_NBITS_LSB |
-        7 << HSTX_CTRL_EXPAND_TMDS_L2_ROT_LSB |
-        4 << HSTX_CTRL_EXPAND_TMDS_L2_NBITS_LSB;
-    // Pixels (TMDS) come in 4 8-bit chunks. Control symbols (RAW) are an
-    // entire 32-bit word.
-    hstx_ctrl_hw->expand_shift =
-        2 << HSTX_CTRL_EXPAND_SHIFT_ENC_N_SHIFTS_LSB |
-        16 << HSTX_CTRL_EXPAND_SHIFT_ENC_SHIFT_LSB |
-        1 << HSTX_CTRL_EXPAND_SHIFT_RAW_N_SHIFTS_LSB |
-        0 << HSTX_CTRL_EXPAND_SHIFT_RAW_SHIFT_LSB;
-
-#endif
-    hstx_ctrl_hw->csr = 0;
-    hstx_ctrl_hw->csr = HSTX_CTRL_CSR_EXPAND_EN_BITS | (uint32_t)MODE_HSTX_CSR_CLKDIV << HSTX_CTRL_CSR_CLKDIV_LSB |
-                        5U << HSTX_CTRL_CSR_N_SHIFTS_LSB | 2U << HSTX_CTRL_CSR_SHIFT_LSB | HSTX_CTRL_CSR_EN_BITS;
-
-    int clk_bit_p = HSTX_BIT_FROM_GPIO(GPIOHSTXCK);
-    int clk_bit_n = GPIOHSTXINVERTED ? (clk_bit_p - 1) : (clk_bit_p + 1);
-    hstx_ctrl_hw->bit[clk_bit_p] = HSTX_CTRL_BIT0_CLK_BITS;
-    hstx_ctrl_hw->bit[clk_bit_n] = HSTX_CTRL_BIT0_CLK_BITS | HSTX_CTRL_BIT0_INV_BITS;
-    // hstx_ctrl_hw->bit[0] = HSTX_CTRL_BIT0_CLK_BITS | HSTX_CTRL_BIT0_INV_BITS;
-    // hstx_ctrl_hw->bit[1] = HSTX_CTRL_BIT0_CLK_BITS;
-    for (uint lane = 0; lane < 3; ++lane) {
-          // For each TMDS lane, assign it to the correct GPIO pair based on the desired pinout:
-
-        // lane_to_output_bit Array:
-        // The lane_to_output_bit array specifies which HSTX output bits are used for each TMDS lane, based on the GPIOHSTXDx defines:
-
-        // Index 0: TMDS lane D0 (data lane 0) → GPIOHSTXD0 (D0+), (GPIOHSTXD0 + GPIOHSTXINVERTED ? -1 : +1) (D0-)
-        // Index 1: TMDS lane D1 (data lane 1) → GPIOHSTXD1 (D1+), (GPIOHSTXD1 + GPIOHSTXINVERTED ? -1 : +1) (D1-)
-        // Index 2: TMDS lane D2 (data lane 2) → GPIOHSTXD2 (D2+), (GPIOHSTXD2 + GPIOHSTXINVERTED ? -1 : +1) (D2-)
-
-        // Example default mapping for Adafruit Metro RP2350:
-        // D0+ = GPIOHSTXD0 (default: GPIO18), D0- = GPIOHSTXD0 + 1 (default: GPIO19)
-        // D1+ = GPIOHSTXD1 (default: GPIO16), D1- = GPIOHSTXD1 + 1 (default: GPIO17)
-        // D2+ = GPIOHSTXD2 (default: GPIO12), D2- = GPIOHSTXD2 + 1 (default: GPIO13)
-        // If GPIOHSTXINVERTED is set, D- is D+ - 1 instead of D+ + 1
-        // See https://learn.adafruit.com/adafruit-metro-rp2350/pinouts#hstx-connector-3193107
-        static const int lane_to_output_bit[3] = {
-            HSTX_BIT_FROM_GPIO(GPIOHSTXD0),
-            HSTX_BIT_FROM_GPIO(GPIOHSTXD1),
-            HSTX_BIT_FROM_GPIO(GPIOHSTXD2)};
-        int bit = lane_to_output_bit[lane];
-        int bit_dn = GPIOHSTXINVERTED ? (bit - 1) : (bit + 1);
-        // Output even bits during first half of each HSTX cycle, and odd bits
-        // during second half. The shifter advances by two bits each cycle.
-        uint32_t lane_data_sel_bits =
-            (lane * 10) << HSTX_CTRL_BIT0_SEL_P_LSB |
-            (lane * 10 + 1) << HSTX_CTRL_BIT0_SEL_N_LSB;
-        // The two halves of each pair get identical data, but one pin is inverted.
-        hstx_ctrl_hw->bit[bit] = lane_data_sel_bits;
-        hstx_ctrl_hw->bit[bit_dn] = lane_data_sel_bits | HSTX_CTRL_BIT0_INV_BITS;
-    }
+    // From a block reset, also on a relaunch by hstx_restart_core1(): the
+    // HSTX still holds whatever video_output_stop() interrupted.
+    hstx_configure();
 
     // Set GPIO 12-19 to HSTX function (function 0 on RP2350)
     for (int i = 12; i <= 19; ++i) {
@@ -752,7 +888,7 @@ void __not_in_flash_func(video_output_core1_run)(void)
     irq_set_enabled(DMA_IRQ_0, true);
 
     bus_ctrl_hw->priority = BUSCTRL_BUS_PRIORITY_DMA_W_BITS | BUSCTRL_BUS_PRIORITY_DMA_R_BITS;
-    dma_channel_start(DMACH_PING);
+    start_output();
 
     // Watchdog: if video_frame_count stops advancing (e.g. DMA chain wedged
     // after an IRQ overrun, HSTX FIFO underflow), hstx_resync() brings the
@@ -763,9 +899,10 @@ void __not_in_flash_func(video_output_core1_run)(void)
     #define VIDEO_OUTPUT_WATCHDOG_US 500000u
 
     // Rate-limit watchdog: no real display exceeds ~65 Hz vertical. If
-    // video_frame_count advances above 75 fps, DMA chain state has drifted
-    // (observed ~158 Hz in DVI mode); trigger a full hstx_resync() to
-    // recover. A soft HSTX CSR toggle was tested and does not clear it.
+    // video_frame_count advances above 75 fps, the HSTX is parsing the stream
+    // out of phase (observed ~160 Hz in DVI mode); trigger a full
+    // hstx_resync() to recover. A CSR.EN toggle does not clear it, see
+    // hstx_configure().
     #define VIDEO_OUTPUT_OVERRATE_FPS 75u
     uint32_t last_frame_us = time_us_32();
     uint32_t last_frame_count_seen = video_frame_count;
@@ -776,6 +913,7 @@ void __not_in_flash_func(video_output_core1_run)(void)
     uint32_t rate_last_us = last_frame_us;
     uint32_t rate_last_frames = last_frame_count_seen;
     uint32_t rate_last_irqs = irq_count;
+    uint32_t rate_last_late = late_pixel_reloads;
 #endif
     while (1) {
         // ----------------------------------------------------------------
@@ -794,15 +932,20 @@ void __not_in_flash_func(video_output_core1_run)(void)
         //
         //   2. Over-rate watchdog (1 Hz sampling window)
         //      video_frame_count advances faster than any real display can
-        //      sync to (>75 fps; ~158 Hz observed in DVI mode after the chain
-        //      drifts). Latches resync_requested for the next iteration.
+        //      sync to (>75 fps; ~160 Hz observed in DVI mode). The HSTX
+        //      command expander is out of phase with the stream: pixel and
+        //      sync words are executed as commands, the FIFO drains faster
+        //      than the pixel clock allows, and the IRQ handler can no longer
+        //      keep the chain fed, which keeps it out of phase. Latches
+        //      resync_requested for the next iteration.
         //
         // Originally these checks were gated on dvi_mode (signal loss was
         // only ever observed in DVI), but they are now run unconditionally
         // for HDMI as a safety net.
         //
-        // hstx_resync() is the only recovery that has been shown to work;
-        // a soft HSTX CSR toggle was tested and fails reliably.
+        // hstx_resync() resets the HSTX block (hstx_configure): toggling
+        // CSR.EN alone leaves the FIFO and the expander state in place, and
+        // a resync built on that kept the output in the over-rate state.
         //
         // All elapsed-time comparisons use uint32_t subtraction, which is
         // safe across the ~71 min wrap of time_us_32().
@@ -827,16 +970,20 @@ void __not_in_flash_func(video_output_core1_run)(void)
             uint32_t d_us = now - rate_last_us;
             uint32_t d_frames = current_count - rate_last_frames;
             uint32_t d_irqs = irq_count - rate_last_irqs;
-            printf("video rate: %lu frames/s, %lu irqs/s (dvi=%d) clk_sys=%lu clk_hstx=%lu csr=%08lx resync=%d di_lvl=%lu underrun=%lu\n",
+            uint32_t late = late_pixel_reloads;
+            printf("video rate: %lu frames/s, %lu irqs/s (dvi=%d) late_px=%lu (+%lu/s) clk_sys=%lu clk_hstx=%lu csr=%08lx resync=%d di_lvl=%lu underrun=%lu (+%lu/s)\n",
                    (unsigned long)((uint64_t)d_frames * 1000000u / d_us),
                    (unsigned long)((uint64_t)d_irqs * 1000000u / d_us),
                    dvi_mode ? 1 : 0,
+                   (unsigned long)late,
+                   (unsigned long)(late - rate_last_late),
                    (unsigned long)clock_get_hz(clk_sys),
                    (unsigned long)clock_get_hz(clk_hstx),
                    (unsigned long)hstx_ctrl_hw->csr,
                    resync_count,
                    (unsigned long)hstx_di_queue_get_level(),
-                   (unsigned long)hstx_di_queue_get_underrun_count());
+                   (unsigned long)hstx_di_queue_get_underrun_count(),
+                   (unsigned long)hstx_di_queue_get_underrun_delta());
             printf("  hstx_div=%08lx exp_sh=%08lx exp_tmds=%08lx ping_ctrl=%08lx pong_ctrl=%08lx\n",
                    (unsigned long)clocks_hw->clk[clk_hstx].div,
                    (unsigned long)hstx_ctrl_hw->expand_shift,
@@ -855,6 +1002,7 @@ void __not_in_flash_func(video_output_core1_run)(void)
             rate_last_us = now;
             rate_last_frames = current_count;
             rate_last_irqs = irq_count;
+            rate_last_late = late;
         }
 #endif
 
@@ -878,11 +1026,17 @@ void __not_in_flash_func(video_output_core1_run)(void)
         // masked across hstx_resync() so it cannot observe the chain in a
         // half-rebuilt state, then all watchdog baselines are reset so the
         // next iteration measures fresh post-recovery progress.
-        bool do_resync = resync_requested ||
-                         (now - last_frame_us) > VIDEO_OUTPUT_WATCHDOG_US;
+        bool stall_wd = (now - last_frame_us) > VIDEO_OUTPUT_WATCHDOG_US;
+        bool do_resync = resync_requested || stall_wd;
 
         if (do_resync)
         {
+            // Which watchdog fired matters for diagnosis: "stall" means the
+            // DMA IRQ stopped feeding the chain (missed deadline / wedge),
+            // "overrate" means the ping/pong chain drifted and is consuming
+            // buffers faster than the pixel clock allows.
+            const char *cause = (resync_requested && stall_wd) ? "overrate+stall"
+                                : (resync_requested ? "overrate" : "stall");
             resync_count++;
             irq_set_enabled(DMA_IRQ_0, false);
             hstx_resync();
@@ -892,7 +1046,8 @@ void __not_in_flash_func(video_output_core1_run)(void)
             last_frame_count_seen = video_frame_count;
             overrate_last_us = last_frame_us;
             overrate_last_frames = video_frame_count;
-            printf("HSTX resync performed! Total resyncs since boot: %d\n", resync_count);
+            printf("HSTX resync performed! cause=%s di_level=%lu Total resyncs since boot: %d\n",
+                   cause, (unsigned long)hstx_di_queue_get_level(), resync_count);
         }
 
         if (background_task) {

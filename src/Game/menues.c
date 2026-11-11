@@ -253,6 +253,12 @@ int duke_menu_is_active(void)
 // cannot be included from here -- declare it, as the pad layer does in the
 // other direction for duke_menu_is_active() above.
 void __attribute__((noreturn)) duke_reboot_to_bootsel(void);
+
+// The OPTIONS menu's "DISPLAY" row (HDMI or DVI), in src/pico/pico_display.c,
+// declared here for the same reason. Setting it switches the running picture
+// and stores the choice on the SD card (/settings_DUKE3D.dat).
+int duke_display_is_dvi(void);
+void duke_display_set_dvi(int dvi);
 #endif
 
 int loadplayer(int8_t spot)
@@ -2489,7 +2495,7 @@ else
             c = (320>>1)-120;
 
 #ifdef PLATFORM_PICO
-            x = probe(c+6,43,16,7); // one extra row: BOOTSEL MODE
+            x = probe(c+6,43,16,8); // two extra rows: DISPLAY, BOOTSEL MODE
 #else
             x = probe(c+6,43,16,6);
 #endif
@@ -2537,7 +2543,11 @@ else
                     break;
 
 #ifdef PLATFORM_PICO
-                case 6: // reset into the ROM bootloader, i.e. the UF2 drive
+                case 6: // HDMI <-> DVI, at once (no apply step)
+                    duke_display_set_dvi(!duke_display_is_dvi());
+                    break;
+
+                case 7: // reset into the ROM bootloader, i.e. the UF2 drive
                     // Nothing else on this path writes the config: the board
                     // resets the moment the row is picked, so the usual
                     // gameexit() -> Shutdown() -> ShutDown() -> CONFIG_WriteSetup()
@@ -2579,16 +2589,21 @@ else
             }
 
 #ifdef PLATFORM_PICO
+            // The HDMI connector's mode. DVI is for monitors that do not accept
+            // HDMI; it carries no sound, which then plays on the board's output.
+            menutext(c,43+16*6,SHX(-12),PHX(-12),"DISPLAY");
+            menutext(c+160+40,43+16*6,SHX(-12),PHX(-12),duke_display_is_dvi() ? "DVI" : "HDMI");
+
             // An action, not a toggle, so label only -- no value in the second
             // column (same as PARENTAL LOCK on the GAME OPTIONS page). Last on
             // purpose: it resets the board the moment it is picked, with no "are
             // you sure", so it wants to be the hardest row to land on by accident.
-            menutext(c,43+16*6,SHX(-12),PHX(-12),"BOOTSEL MODE");
+            menutext(c,43+16*7,SHX(-14),PHX(-14),"BOOTSEL MODE");
 
-            // probe() returns -probey-2 while idling on a row, so -8 is row 6.
+            // probe() returns -probey-2 while idling on a row, so -9 is row 7.
             // With no confirmation page, this line is the only warning there is.
-            if(x == -8)
-                gametext(320>>1,43+16*7+4,"*** RESETS THE BOARD FOR REFLASHING ***",0,2+8+16);
+            if(x == -9)
+                gametext(320>>1,43+16*8+4,"*** RESETS THE BOARD FOR REFLASHING ***",0,2+8+16);
 #endif
 
             break;

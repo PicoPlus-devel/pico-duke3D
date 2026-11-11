@@ -23,6 +23,7 @@
 #include "duke_dostext.h"
 #include "duke_leds.h"
 #include "hstx_data_island_queue.h"
+#include "duke_settings.h"
 
 // BUILD engine headers (declarations + functions we drive).
 #include "build.h"
@@ -117,10 +118,16 @@ void duke_video_ensure_up(void)
     memset(s_pal555, 0, sizeof(s_pal555));
     memset(s_rgb, 0, sizeof(s_rgb));
 
-    // HDMI mode (not DVI-only) so audio data islands are emitted; init the DI
-    // queue before video comes up (M0-proven order). duke_audio.c pushes the
-    // mixed samples; 48 kHz is the exact-lock rate for the 25.2 MHz pixel clock.
-    video_output_set_dvi_mode(false);
+    // HDMI or DVI as stored (duke_settings.c). HDMI emits audio data islands;
+    // init the DI queue before video comes up (M0-proven order), in DVI mode as
+    // well for a later switch. duke_audio.c pushes the mixed samples; 48 kHz is
+    // the exact-lock rate for the 25.2 MHz pixel clock.
+    {
+        extern void duke_audio_set_dvi(bool dvi);
+        bool dvi = duke_settings_boot_dvi();
+        video_output_set_dvi_mode(dvi);
+        duke_audio_set_dvi(dvi);
+    }
     hstx_di_queue_init();
     video_output_set_vsync_callback(duke_vsync_cb);
     // Audio pump runs as core1's idle-loop background task — immune to
@@ -135,7 +142,8 @@ void duke_video_ensure_up(void)
     multicore_launch_core1_with_stack(video_output_core1_run,
                                       s_core1_stack, sizeof(s_core1_stack));
     s_video_up = true;
-    printf("pico_display: HSTX 640x480 up (clk_hstx=%lu)\n",
+    printf("pico_display: HSTX 640x480 %s up (clk_hstx=%lu)\n",
+           video_output_get_dvi_mode() ? "DVI" : "HDMI",
            (unsigned long)clock_get_hz(clk_hstx));
 
     // Put Duke's DOS startup sequence on screen. Everything printed before this
@@ -145,6 +153,24 @@ void duke_video_ensure_up(void)
     // to the display as well as the UART. It renders into the RGB555 scanout
     // surface directly, because no palette is loaded yet.
     duke_dostext_init(s_rgb, FB_W);
+}
+
+// The OPTIONS menu's DISPLAY row (menues.c): 1 for DVI, 0 for HDMI.
+int duke_display_is_dvi(void)
+{
+    return video_output_get_dvi_mode();
+}
+
+// Switches the running picture, moves the sound to the matching output and
+// stores the choice. The HSTX DMA interrupt reads the mode on every scanline,
+// so this is safe at any time.
+void duke_display_set_dvi(int dvi)
+{
+    extern void duke_audio_set_dvi(bool dvi);
+    video_output_set_dvi_mode(dvi != 0);
+    duke_audio_set_dvi(dvi != 0);
+    duke_settings_save_display(dvi != 0);
+    printf("pico_display: %s\n", dvi ? "DVI" : "HDMI");
 }
 
 // Hand the RGB555 scanout surface back to the DOS console (duke_fatal). Lives

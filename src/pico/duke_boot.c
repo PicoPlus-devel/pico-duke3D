@@ -302,15 +302,20 @@ int main(void)
     // screen appears.
     duke_psram_init();
 
+    // The SD card before the display as well: it holds the display mode (HDMI
+    // or DVI) to start in (duke_settings.c), which duke_fatfs_init reads right
+    // after the mount. Its own failures still reach the screen: duke_fatal
+    // brings the display up itself, in the board's default mode when there is
+    // no card, and in the stored mode for a missing folder or GRP.
+    duke_fatfs_init();
+
     // From here on the boot log is on the HDMI output, which is the whole point:
-    // everything after this — the SD mount, the GRP, the engine startup — can
-    // fail, and those failures are what a user without a serial cable (or, on
-    // the Murmulator M2, without a UART at all) could never see.
+    // everything after this — the GRP, the engine startup — can fail, and those
+    // failures are what a user without a serial cable (or, on the Murmulator
+    // M2, without a UART at all) could never see.
     duke_video_ensure_up();
 
     if (duke_psram_error()) duke_fatal("%s", duke_psram_error());
-
-    duke_fatfs_init();
 
     static char arg0[] = "duke3d";
     static char *argv[] = { arg0, 0 };

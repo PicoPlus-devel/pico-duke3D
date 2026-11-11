@@ -21,6 +21,7 @@ if (NOT TARGET pico_hdmi)
                     hardware_pio
                     hardware_dma
                     hardware_clocks
+                    hardware_resets
             )
         # Doom drives clk_sys at 264 MHz. pico_hdmi's default clock config sets
         # clk_hstx = clk_sys / MODE_HSTX_CLK_DIV (=1), which would give 264 MHz
