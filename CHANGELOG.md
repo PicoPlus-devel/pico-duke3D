@@ -12,9 +12,13 @@ so keep the heading text exactly the tag name.
   HDMI or DVI under *Options → Display*; the picture switches at once and the choice is
   kept on the SD card. DVI carries no sound: it plays on the board's own audio output
   instead (on the Fruit Jam the speaker, or the headphones when plugged in). The
-  Murmulator M2 starts in DVI until another mode is chosen.
-- Started from [pico-bootLoader](https://github.com/PicoPlus-devel/pico-bootLoader),
-  the game uses the display mode set in the bootloader's menu.
+  Murmulator M2 now starts in DVI until another mode is chosen; choose HDMI for sound on
+  the TV.
+- **Waveshare RP2350-PiZero on the PCB by Liu Szuping** (@szuping) is now supported
+  (`duke3d_game_pizeroliupcb.uf2`). Picture over the PCB's
+  HDMI port, sound over HDMI and the audio jack at the same time, a USB keyboard, mouse
+  or gamepad on the PiZero's PIO-USB port, and two NES/SNES controller ports. Duke
+  needs a PSRAM chip soldered onto the PiZero. The PCB design is not yet available.
 
 ## v0.5
 

@@ -9,7 +9,7 @@
 # invokes those scripts itself and puts the result on the SD card under
 # /emu/<HW_CONFIG>/.
 
-RELEASE_BOARDS="fruitjam murmulatorm2 adafruitdvisd olimexpicopc"
+RELEASE_BOARDS="fruitjam murmulatorm2 adafruitdvisd olimexpicopc pizeroliupcb"
 
 # Human-readable name, for the release notes.
 board_name() {
@@ -18,6 +18,7 @@ board_name() {
         murmulatorm2)  echo "Murmulator M2 (RP2350)" ;;
         adafruitdvisd) echo "Pico Plus 2 + Adafruit DVI + SD breakouts" ;;
         olimexpicopc)  echo "Olimex RP2040-PICO-PC + Pico 2" ;;
+        pizeroliupcb)  echo "Waveshare RP2350-PiZero on the PCB by Liu Szuping" ;;
         *)             echo "$1" ;;
     esac
 }
@@ -30,6 +31,7 @@ board_hwconfig() {
         murmulatorm2)  echo 13 ;;
         adafruitdvisd) echo 2 ;;
         olimexpicopc)  echo 15 ;;
+        pizeroliupcb)  echo 18 ;;
         *)             echo "?" ;;
     esac
 }
@@ -39,18 +41,19 @@ board_hwconfig() {
 # HAS_USBPIO in <tag>_cflags.h, which duke_usb_input.cpp cross-checks.
 board_needs_pio_usb() {
     case "$1" in
-        fruitjam) return 0 ;;
-        *)        return 1 ;;
+        fruitjam|pizeroliupcb) return 0 ;;
+        *)                     return 1 ;;
     esac
 }
 
 # Caveat for the release notes, empty when there is none. Keep in step with the
-# "Which board" table in README.md and "Status" in TECHNICAL.md: all four boards are
-# now hardware-verified, so only genuine hardware requirements are left here.
+# "Which board" table in README.md and "Status" in TECHNICAL.md. Only genuine
+# hardware requirements belong here.
 board_note() {
     case "$1" in
         adafruitdvisd) echo "needs a Pimoroni Pico Plus 2" ;;
         olimexpicopc)  echo "needs PSRAM fitted on GPIO 8" ;;
+        pizeroliupcb)  echo "needs PSRAM soldered onto the PiZero (GPIO 47)" ;;
         *)             echo "" ;;
     esac
 }

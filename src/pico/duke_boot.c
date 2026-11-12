@@ -275,6 +275,10 @@ int main(void)
 #define DUKE_BOARD_NAME "Adafruit Fruit Jam"
 #elif HW_CONFIG == 2
 #define DUKE_BOARD_NAME "Adafruit DVI + SD"
+#elif HW_CONFIG == 15
+#define DUKE_BOARD_NAME "Olimex RP2040-PICO-PC"
+#elif HW_CONFIG == 18
+#define DUKE_BOARD_NAME "RP2350-PiZero, Liu PCB"
 #else
 #define DUKE_BOARD_NAME "unknown board"
 #endif

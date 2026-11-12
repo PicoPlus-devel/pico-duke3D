@@ -7,7 +7,7 @@
 # `./buildAll.sh`, so running it locally is the way to test the pipeline.
 #
 #   export PICO_SDK_PATH=/path/to/pico-sdk
-#   export PICO_PIO_USB_PATH=/path/to/Pico-PIO-USB     # Fruit Jam only
+#   export PICO_PIO_USB_PATH=/path/to/Pico-PIO-USB     # Fruit Jam and pizeroliupcb
 #   ./buildAll.sh
 #
 # Optional: CMAKE_ARGS="-DDUKE_RELEASE_VERSION=v1.0" to stamp a version into the

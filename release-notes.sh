@@ -51,8 +51,8 @@ done
 if [ -n "$notes" ]; then
     {
         echo
-        echo "> All boards listed above are tested and working on real hardware. A few have"
-        echo "> hardware requirements worth checking before you flash:"
+        echo "> The boards listed above are tested and working on real hardware, except where"
+        echo "> noted below. A few have hardware requirements worth checking before you flash:"
         echo
         echo "| Board | Requirement |"
         echo "|---|---|"
@@ -73,6 +73,7 @@ fi
     echo "| Game data | \`/roms/duke3d/DUKE3D.GRP\` (shareware, or registered/Atomic) |"
     echo "| Saved games | \`/roms/duke3d/game0.sav\` … \`game9.sav\` |"
     echo "| Settings | \`/roms/duke3d/duke3d.cfg\` |"
+    echo "| Display mode | \`/settings_DUKE3D.dat\` |"
     echo
     echo "Format the card FAT32 or exFAT. Without a card -- or without the GRP -- the game"
     echo "cannot run at all, and says so **on the HDMI output**: the DOS-style startup"
@@ -99,6 +100,15 @@ fi
     echo "  the board's audio jack at the same time (no I2S DAC). USB host is native, on"
     echo "  the board's USB-A socket; one NES/SNES pad works on the UEXT connector. There is"
     echo "  no serial console (GP0/1 are the PS/2 port, which is not used)."
+    echo "* **Waveshare RP2350-PiZero on the PCB by Liu Szuping** -- the PiZero has no PSRAM"
+    echo "  unless a chip is soldered on (GPIO 47), and Duke will not start without it. A"
+    echo "  PiZero with PSRAM and a non-Winbond flash chip locks up when overclocked until"
+    echo "  the flash's QE bit is set once with \`FLASH_QE_SET_1.uf2\`; see"
+    echo "  [PSRAM with a non-Winbond flash chip](https://github.com/PicoPlus-devel/pico-infonesPlus#psram-with-a-non-winbond-flash-chip)."
+    echo "  Picture on the PCB's HDMI port, sound on HDMI and the audio jack at the same time."
+    echo "  USB host runs over PIO on the PiZero's PIO-USB port; a USB hub there does not"
+    echo "  work, so only one USB device can be used. The two controller ports work as well"
+    echo "  (remove the ESP32 module from its socket to use them)."
     echo
     echo "### Controls"
     echo
@@ -116,7 +126,8 @@ fi
     echo
     echo "The files in **this** release are for flashing a board directly over USB. The"
     echo "bootloader variants -- the ones that live on the SD card under \`/emu/8/\`,"
-    echo "\`/emu/13/\` or \`/emu/2/\` as \`duke3d_game.uf2\` and are launched from the picker --"
+    echo "\`/emu/13/\`, \`/emu/2/\`, \`/emu/15/\` or \`/emu/18/\` as \`duke3d_game.uf2\` and are"
+    echo "launched from the picker --"
     echo "are built and released by the"
     echo "[pico-bootLoader](https://github.com/${GITHUB_REPOSITORY_OWNER:-fhoedemakers}/pico-bootLoader)"
     echo "repository, which links them into its app partition itself."

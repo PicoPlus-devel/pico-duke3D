@@ -1,6 +1,6 @@
 # pico-duke3D
 
-A port of Duke Nukem 3D to four small RP2350 hobby boards. Output is HDMI, input is
+A port of Duke Nukem 3D to five small RP2350 hobby boards. Output is HDMI, input is
 a USB gamepad, keyboard or mouse, and the game data comes off an SD card.
 
 The game data stays on the card, so switching between the shareware episode and the
@@ -12,15 +12,16 @@ full Atomic Edition means replacing one file.
 - Sound effects and Adlib / Sound Blaster music
 - USB gamepads, keyboards and mice, plus NES, SNES and Wii Classic controllers on the
   boards that have those connectors, and a SNES Mouse on the Adafruit DVI + SD board
+  and the RP2350-PiZero PCB
 - Savegames, settings and screenshots on the SD card
 - Errors are reported on the screen, so no serial cable or computer is needed to find
   out what went wrong
 - Runs standalone, or from the
-  [pico-bootLoader](https://github.com/fhoedemakers/pico-bootLoader) menu
+  [pico-bootLoader](https://github.com/PicoPlus-devel/pico-bootLoader) menu
 
 ## What you need
 
-- One of the four [boards](#which-board) below
+- One of the five [boards](#which-board) below
 - A micro SD card, formatted FAT or exFAT
 - `DUKE3D.GRP` — the game's data file. The shareware version works, as does the one
   from the registered or Atomic Edition.
@@ -30,18 +31,18 @@ full Atomic Edition means replacing one file.
 
 ## Which board
 
-All four are tested and working on real hardware.
+All five are tested and working on real hardware.
 
-| | Fruit Jam | Murmulator M2 | Adafruit DVI + SD | Olimex RP2040-PICO-PC |
-|---|---|---|---|---|
-| Video | HDMI 640×480 | same | same | same |
-| Sound | headphones **or** HDMI — switches when you plug in | headphones and HDMI at once | headphones (optional module) and HDMI at once | audio jack and HDMI at once |
-| USB pad / keyboard / mouse | plug straight in | needs an OTG adapter | needs an OTG adapter | plug straight into the USB-A socket |
-| NES/SNES controller ports | — | two | two, also for a SNES Mouse | one, on the UEXT connector |
-| Wii Classic pad | yes | yes | — | — |
-| Lights | blinking LED, plus five LEDs used as a sound-level meter | blinking LED | blinking LED | blinking LED |
-| Also needed | — | — | the module must be a **Pimoroni Pico Plus 2** | a Pico 2 with a **PSRAM chip fitted on GPIO 8** |
-| Folder on the SD card, **when using [pico-bootLoader](https://github.com/fhoedemakers/pico-bootLoader)** | `/emu/8/` | `/emu/13/` | `/emu/2/` | `/emu/15/` |
+| | Fruit Jam | Murmulator M2 | Adafruit DVI + SD | Olimex RP2040-PICO-PC | RP2350-PiZero PCB |
+|---|---|---|---|---|---|
+| Video | HDMI 640×480 | same | same | same | same, on the PCB's HDMI port |
+| Sound | headphones **or** HDMI — switches when you plug in | headphones and HDMI at once; in DVI, the default, headphones only | headphones (optional module) and HDMI at once | audio jack and HDMI at once | audio jack and HDMI at once |
+| USB pad / keyboard / mouse | plug straight in | needs an OTG adapter | needs an OTG adapter | plug straight into the USB-A socket | one device, on the PiZero's PIO-USB port |
+| NES/SNES controller ports | — | two | two, also for a SNES Mouse | one, on the UEXT connector | two, also for a SNES Mouse |
+| Wii Classic pad | yes | yes | — | — | — |
+| Lights | blinking LED, plus five LEDs used as a sound-level meter | blinking LED | blinking LED | blinking LED | blinking LED |
+| Also needed | — | — | the module must be a **Pimoroni Pico Plus 2** | a Pico 2 with a **PSRAM chip fitted on GPIO 8** | a **PSRAM chip soldered onto the PiZero** |
+| Folder on the SD card, **when using [pico-bootLoader](https://github.com/PicoPlus-devel/pico-bootLoader)** | `/emu/8/` | `/emu/13/` | `/emu/2/` | `/emu/15/` | `/emu/18/` |
 
 The Adafruit DVI + SD entry is a self-built option: a Pico-shaped module on a
 breadboard or a small circuit board, with an
@@ -55,6 +56,28 @@ The Olimex RP2040-PICO-PC is used here with a Raspberry Pi Pico 2 in place of th
 original Pico. A stock Pico 2 has no PSRAM, which the game needs, so a PSRAM chip must
 be fitted to it (chip select on GPIO 8); without it the game reports this on screen and
 stops. The board's PS/2 keyboard port is not used.
+
+The RP2350-PiZero PCB is a circuit board designed by Liu Szuping
+([szuping](https://github.com/szuping)) that carries a
+[Waveshare RP2350-PiZero](https://www.waveshare.com/rp2350-pizero.htm) and adds an HDMI
+port, an audio jack, two NES/SNES controller ports and a socket for an ESP32 module. The
+design is not yet available; see
+[PCB with Waveshare RP2350-PiZero](https://github.com/PicoPlus-devel/pico-infonesPlus#pcb-with-waveshare-rp2350-pizero).
+Use the firmware built for this PCB, not one for the RP2350-PiZero on its own.
+
+- The mini HDMI port of the RP2350-PiZero is not used. The card goes in the PiZero's
+  own SD card slot.
+- The RP2350-PiZero has no PSRAM unless a chip is soldered on (chip select on GPIO 47).
+  Without it the game reports this on screen and stops.
+- A PiZero with PSRAM and a flash chip from a manufacturer other than Winbond, such as
+  Puya, locks up when overclocked, which the game does. The flash chip needs a one-time
+  fix first; see
+  [PSRAM with a non-Winbond flash chip](https://github.com/PicoPlus-devel/pico-infonesPlus#psram-with-a-non-winbond-flash-chip).
+- A USB hub on the PiZero's PIO-USB port does not work, so only one USB device can be
+  used at a time.
+- The ESP32 socket is for Bluetooth controllers through
+  [BlueRetro](https://github.com/darthcloud/blueretro). Remove the module to use the
+  controller ports.
 
 ## PicoNES PCB
 
@@ -130,7 +153,7 @@ Gavin Knight ([DynaMight1124](https://github.com/DynaMight1124)) designed an NES
 ## Installing
 
 1. Download the file for your board from the
-   [releases page](https://github.com/fhoedemakers/pico-duke3D/releases).
+   [releases page](https://github.com/PicoPlus-devel/pico-duke3D/releases).
 2. Hold the **BOOT** button on the board while connecting it to a computer. It appears
    as a USB drive. (Once the game is on there, **OPTIONS → [BOOTSEL MODE](#bootsel-mode)**
    brings that drive back without unplugging anything.)
@@ -146,10 +169,11 @@ Savegames, settings and screenshots are written to the card as you play:
 roms/duke3d/DUKE3D.GRP      the game data
 roms/duke3d/game0.sav       savegames
 roms/duke3d/duke3d.cfg      settings and key bindings
+settings_DUKE3D.dat         display mode (HDMI or DVI)
 screenshots/duke0000.png    F12 captures
 ```
 
-If you use [pico-bootLoader](https://github.com/fhoedemakers/pico-bootLoader) to
+If you use [pico-bootLoader](https://github.com/PicoPlus-devel/pico-bootLoader) to
 select between several games, use its build of Duke instead: download it from that
 project and place it in the folder for your board given in the table above. Quitting
 Duke, or pressing reset, returns to the menu.
@@ -440,9 +464,11 @@ The mode is set under **OPTIONS → DISPLAY**. The picture switches at once, and
 is stored in `/settings_DUKE3D.dat` on the SD card. Without a stored choice the Murmulator
 M2 starts in DVI and the other boards in HDMI.
 
-When the game is started from [pico-bootLoader](https://github.com/PicoPlus-devel/pico-bootLoader),
-it uses the display mode set in the bootloader's menu (`DISPLAY=` in `/boot.txt`) instead. A
-change made in the game then applies until the next start.
+From [pico-bootLoader](https://github.com/PicoPlus-devel/pico-bootLoader) v0.10 on, a game
+started from the bootloader uses the display mode set in the bootloader's menu (`DISPLAY=` in
+`/boot.txt`) instead. A change made in the game then applies until the next start. Older
+bootloader versions do not know the `DISPLAY=` key: with it in `/boot.txt` they stop with
+"BOOT.TXT INVALID".
 
 ## Bootsel mode
 

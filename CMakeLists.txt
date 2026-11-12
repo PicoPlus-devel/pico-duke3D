@@ -19,6 +19,9 @@ set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 #   murmulatorm2  Murmulator M2 / Pico 2   (HW_CONFIG 13, native USB, PCM5100A)
 #   adafruitdvisd Adafruit DVI + SD boards (HW_CONFIG 2,  native USB, PCM5100A;
 #                 needs a Pico Plus 2 — PSRAM is on GPIO 47, an RP2350B pin)
+#   olimexpicopc  Olimex RP2040-PICO-PC    (HW_CONFIG 15, native USB, PWM audio)
+#   pizeroliupcb  RP2350-PiZero, Liu's PCB (HW_CONFIG 18, PIO-USB, PCM5102;
+#                 PSRAM soldered on GPIO 47)
 #
 set(DUKE_BOARD "fruitjam" CACHE STRING "Board tag: selects <tag>_cflags.h")
 if (NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${DUKE_BOARD}_cflags.h")
@@ -82,6 +85,11 @@ set(PICO_SDK_PATH "${PICO_SDK_PATH}" CACHE PATH "Path to the Raspberry Pi Pico S
 if (NOT PICO_PIO_USB_PATH AND DEFINED ENV{PICO_PIO_USB_PATH})
     set(PICO_PIO_USB_PATH $ENV{PICO_PIO_USB_PATH})
 endif()
+
+# Board headers the pico-sdk does not ship (waveshare_rp2350_pizero for
+# HW_CONFIG 18, copied verbatim from pico_shared/boards). The SDK's own headers
+# are still found by name for every other board.
+list(APPEND PICO_BOARD_HEADER_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/boards)
 
 include(${PICO_SDK_PATH}/pico_sdk_init.cmake)
 
