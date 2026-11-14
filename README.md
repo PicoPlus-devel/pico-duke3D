@@ -75,6 +75,9 @@ Use the firmware built for this PCB, not one for the RP2350-PiZero on its own.
   [PSRAM with a non-Winbond flash chip](https://github.com/PicoPlus-devel/pico-infonesPlus#psram-with-a-non-winbond-flash-chip).
 - A USB hub on the PiZero's PIO-USB port does not work, so only one USB device can be
   used at a time.
+- During play, some TVs and monitors lose the picture for a few seconds at a time, while
+  others show it without interruption. This is a limitation of the RP2350-PiZero at
+  384 MHz, the clock the game runs at.
 - The ESP32 socket is for Bluetooth controllers through
   [BlueRetro](https://github.com/darthcloud/blueretro). Remove the module to use the
   controller ports.

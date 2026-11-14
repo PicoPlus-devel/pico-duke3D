@@ -19,6 +19,9 @@ so keep the heading text exactly the tag name.
   HDMI port, sound over HDMI and the audio jack at the same time, a USB keyboard, mouse
   or gamepad on the PiZero's PIO-USB port, and two NES/SNES controller ports. Duke
   needs a PSRAM chip soldered onto the PiZero. The PCB design is not yet available.
+  **Known issue:** on this board, some TVs and monitors lose the picture for a few seconds
+  at a time during play; others show it without interruption. This is a limitation of the
+  RP2350-PiZero at 384 MHz, the clock the game needs.
 
 ## v0.5
 
