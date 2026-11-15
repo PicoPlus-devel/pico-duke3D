@@ -35,12 +35,13 @@
 // have no console at all, and uart0 is never taken out of reset there — poking
 // its registers would fault inside the fault handler. The handler stays
 // installed so a debugger still lands on a known symbol, it just has nothing
-// to print to.
+// to print to. The other boards print to uart_default, the console's UART
+// (UART1 on the Pico Computer 3, UART0 elsewhere).
 // ---------------------------------------------------------------------------
 #if NO_USE_UART
 #define hf_putc(c)  ((void)(c))
 #else
-#define hf_putc(c)  uart_putc_raw(uart0, (c))
+#define hf_putc(c)  uart_putc_raw(uart_default, (c))
 #endif
 
 static void hf_puthex(uint32_t v)
@@ -277,6 +278,8 @@ int main(void)
 #define DUKE_BOARD_NAME "Adafruit DVI + SD"
 #elif HW_CONFIG == 15
 #define DUKE_BOARD_NAME "Olimex RP2040-PICO-PC"
+#elif HW_CONFIG == 17
+#define DUKE_BOARD_NAME "Pico Computer 3"
 #elif HW_CONFIG == 18
 #define DUKE_BOARD_NAME "RP2350-PiZero, Liu PCB"
 #else

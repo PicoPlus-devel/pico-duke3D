@@ -9,7 +9,7 @@
 # invokes those scripts itself and puts the result on the SD card under
 # /emu/<HW_CONFIG>/.
 
-RELEASE_BOARDS="fruitjam murmulatorm2 adafruitdvisd olimexpicopc pizeroliupcb"
+RELEASE_BOARDS="fruitjam murmulatorm2 adafruitdvisd olimexpicopc pizeroliupcb picocomputer3"
 
 # Human-readable name, for the release notes.
 board_name() {
@@ -19,6 +19,7 @@ board_name() {
         adafruitdvisd) echo "Pico Plus 2 + Adafruit DVI + SD breakouts" ;;
         olimexpicopc)  echo "Olimex RP2040-PICO-PC + Pico 2" ;;
         pizeroliupcb)  echo "Waveshare RP2350-PiZero on the PCB by Liu Szuping" ;;
+        picocomputer3) echo "Pico Computer 3 (PC3)" ;;
         *)             echo "$1" ;;
     esac
 }
@@ -32,6 +33,7 @@ board_hwconfig() {
         adafruitdvisd) echo 2 ;;
         olimexpicopc)  echo 15 ;;
         pizeroliupcb)  echo 18 ;;
+        picocomputer3) echo 17 ;;
         *)             echo "?" ;;
     esac
 }
@@ -48,12 +50,13 @@ board_needs_pio_usb() {
 
 # Caveat for the release notes, empty when there is none. Keep in step with the
 # "Which board" table in README.md and "Status" in TECHNICAL.md. Only genuine
-# hardware requirements belong here.
+# hardware requirements, and boards not yet tested, belong here.
 board_note() {
     case "$1" in
         adafruitdvisd) echo "needs a Pimoroni Pico Plus 2" ;;
         olimexpicopc)  echo "needs PSRAM fitted on GPIO 8" ;;
         pizeroliupcb)  echo "needs PSRAM soldered onto the PiZero (GPIO 47)" ;;
+        picocomputer3) echo "not yet tested on hardware" ;;
         *)             echo "" ;;
     esac
 }

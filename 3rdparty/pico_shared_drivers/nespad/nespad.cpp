@@ -20,7 +20,7 @@
 #endif
 // "set x, NESPAD_READ_BITS - 1  side 1": the bit counter of both variants.
 #define NESPAD_SET_X (0xf020 | (NESPAD_READ_BITS - 1))
-#if HW_CONFIG == 12 || HW_CONFIG == 13 // Murmulator M1/M2 bothe controllers ahare latch and clock
+#if HW_CONFIG == 12 || HW_CONFIG == 13 || HW_CONFIG == 17 // Murmulator M1/M2 and Pico Computer 3: both controllers share latch and clock
 static const uint16_t nespad_program_instructions[] = {
     //     .wrap_target
     // @javavi pull request

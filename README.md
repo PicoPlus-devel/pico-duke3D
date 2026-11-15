@@ -1,6 +1,6 @@
 # pico-duke3D
 
-A port of Duke Nukem 3D to five small RP2350 hobby boards. Output is HDMI, input is
+A port of Duke Nukem 3D to six small RP2350 hobby boards. Output is HDMI, input is
 a USB gamepad, keyboard or mouse, and the game data comes off an SD card.
 
 The game data stays on the card, so switching between the shareware episode and the
@@ -21,7 +21,7 @@ full Atomic Edition means replacing one file.
 
 ## What you need
 
-- One of the five [boards](#which-board) below
+- One of the six [boards](#which-board) below
 - A micro SD card, formatted FAT or exFAT
 - `DUKE3D.GRP` — the game's data file. The shareware version works, as does the one
   from the registered or Atomic Edition.
@@ -31,18 +31,19 @@ full Atomic Edition means replacing one file.
 
 ## Which board
 
-All five are tested and working on real hardware.
+The first five are tested and working on real hardware. The Pico Computer 3 has not been
+tested yet.
 
-| | Fruit Jam | Murmulator M2 | Adafruit DVI + SD | Olimex RP2040-PICO-PC | RP2350-PiZero PCB |
-|---|---|---|---|---|---|
-| Video | HDMI 640×480 | same | same | same | same, on the PCB's HDMI port |
-| Sound | headphones **or** HDMI — switches when you plug in | headphones and HDMI at once; in DVI, the default, headphones only | headphones (optional module) and HDMI at once | audio jack and HDMI at once | audio jack and HDMI at once |
-| USB pad / keyboard / mouse | plug straight in | needs an OTG adapter | needs an OTG adapter | plug straight into the USB-A socket | one device, on the PiZero's PIO-USB port |
-| NES/SNES controller ports | — | two | two, also for a SNES Mouse | one, on the UEXT connector | two, also for a SNES Mouse |
-| Wii Classic pad | yes | yes | — | — | — |
-| Lights | blinking LED, plus five LEDs used as a sound-level meter | blinking LED | blinking LED | blinking LED | blinking LED |
-| Also needed | — | — | the module must be a **Pimoroni Pico Plus 2** | a Pico 2 with a **PSRAM chip fitted on GPIO 8** | a **PSRAM chip soldered onto the PiZero** |
-| Folder on the SD card, **when using [pico-bootLoader](https://github.com/PicoPlus-devel/pico-bootLoader)** | `/emu/8/` | `/emu/13/` | `/emu/2/` | `/emu/15/` | `/emu/18/` |
+| | Fruit Jam | Murmulator M2 | Adafruit DVI + SD | Olimex RP2040-PICO-PC | RP2350-PiZero PCB | Pico Computer 3 |
+|---|---|---|---|---|---|---|
+| Video | HDMI 640×480 | same | same | same | same, on the PCB's HDMI port | same |
+| Sound | headphones **or** HDMI — switches when you plug in | headphones and HDMI at once; in DVI, the default, headphones only | headphones (optional module) and HDMI at once | audio jack and HDMI at once | audio jack and HDMI at once | audio jack and HDMI at once |
+| USB pad / keyboard / mouse | plug straight in | needs an OTG adapter | needs an OTG adapter | plug straight into the USB-A socket | one device, on the PiZero's PIO-USB port | plug straight into the USB-A ports, up to three devices |
+| NES/SNES controller ports | — | two | two, also for a SNES Mouse | one, on the UEXT connector | two, also for a SNES Mouse | two, on the I/O header |
+| Wii Classic pad | yes | yes | — | — | — | yes, on the I/O header |
+| Lights | blinking LED, plus five LEDs used as a sound-level meter | blinking LED | blinking LED | blinking LED | blinking LED | blinking LED |
+| Also needed | — | — | the module must be a **Pimoroni Pico Plus 2** | a Pico 2 with a **PSRAM chip fitted on GPIO 8** | a **PSRAM chip soldered onto the PiZero** | — |
+| Folder on the SD card, **when using [pico-bootLoader](https://github.com/PicoPlus-devel/pico-bootLoader)** | `/emu/8/` | `/emu/13/` | `/emu/2/` | `/emu/15/` | `/emu/18/` | not supported by the bootloader yet |
 
 The Adafruit DVI + SD entry is a self-built option: a Pico-shaped module on a
 breadboard or a small circuit board, with an
@@ -81,6 +82,27 @@ Use the firmware built for this PCB, not one for the RP2350-PiZero on its own.
 - The ESP32 socket is for Bluetooth controllers through
   [BlueRetro](https://github.com/darthcloud/blueretro). Remove the module to use the
   controller ports.
+
+The [Pico Computer 3](https://github.com/UKTailwind/Pico-Computer-3) (PC3) is an RP2350B
+computer board with an HDMI connector, a microSD card slot, 8 MB of PSRAM, a USB hub and
+an audio jack. The pico_shared emulators call it HW_CONFIG 17; support for it there was
+contributed by [javavi](https://github.com/javavi). Duke has not been tested on this
+board yet, and the pin assignment of its I/O header may still change.
+
+- USB devices go in the USB-A ports, which are behind the board's USB hub. Up to three
+  USB devices can be used at the same time.
+- Up to two NES or SNES controllers connect to the external I/O header H4. Both ports
+  share the clock and latch lines:
+
+  | | Clock | Latch | Data |
+  |:--|:--|:--|:--|
+  | Port 1 | GPIO 4 | GPIO 5 | GPIO 6 |
+  | Port 2 | GPIO 4 | GPIO 5 | GPIO 7 |
+
+  A SNES Mouse is not supported on this board.
+- A Wii Classic pad connects to I2C0: SDA on GPIO 20 and SCL on GPIO 21.
+- The serial console is UART1: TX on GPIO 8, RX on GPIO 9.
+- The heartbeat LED on GPIO 25 blinks when jumper H5 is set to 1-2.
 
 ## PicoNES PCB
 
@@ -286,7 +308,7 @@ not exist on a NES pad**, so the first press of any of them is proof. Until that
 arrives the port assumes a NES pad, because guessing wrong that way costs a SNES player
 one press, while guessing the other way leaves a NES player with no fire button at all.
 
-**Wii Classic pads** on the Fruit Jam and Murmulator M2: a NES Classic Mini, SNES
+**Wii Classic pads** on the Fruit Jam, Murmulator M2 and Pico Computer 3: a NES Classic Mini, SNES
 Classic Mini or Wii Classic Controller (Pro), on an adapter such as the
 [Adafruit Wii Nunchuck Adapter](https://www.adafruit.com/product/4836). Unlike USB,
 these can be connected at any time, including during play; the pad is detected within a

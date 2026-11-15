@@ -109,6 +109,11 @@ fi
     echo "  USB host runs over PIO on the PiZero's PIO-USB port; a USB hub there does not"
     echo "  work, so only one USB device can be used. The two controller ports work as well"
     echo "  (remove the ESP32 module from its socket to use them)."
+    echo "* **Pico Computer 3 (PC3)** -- not yet tested on hardware. Onboard PSRAM, onboard SD."
+    echo "  Sound on HDMI and the audio jack at the same time. USB host is the RP2350's native"
+    echo "  controller, behind the board's hub: up to three USB devices on its USB-A ports."
+    echo "  Two NES/SNES controllers and a Wii Classic controller connect to the I/O header."
+    echo "  The serial console is UART1 on GP8/9. The pin assignment may still change."
     echo
     echo "### Controls"
     echo

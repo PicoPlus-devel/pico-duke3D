@@ -22,6 +22,7 @@ set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 #   olimexpicopc  Olimex RP2040-PICO-PC    (HW_CONFIG 15, native USB, PWM audio)
 #   pizeroliupcb  RP2350-PiZero, Liu's PCB (HW_CONFIG 18, PIO-USB, PCM5102;
 #                 PSRAM soldered on GPIO 47)
+#   picocomputer3 Pico Computer 3          (HW_CONFIG 17, native USB, PCM5102)
 #
 set(DUKE_BOARD "fruitjam" CACHE STRING "Board tag: selects <tag>_cflags.h")
 if (NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${DUKE_BOARD}_cflags.h")
