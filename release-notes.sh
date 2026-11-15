@@ -184,4 +184,10 @@ fi
     printf ', version stamp `%s`.\n' "$TAG"
 } >> "$OUT"
 
+# GitHub shows release notes like a comment, where every line break stays a
+# break, so join the wrapped lines of each paragraph, list item and quote
+# (.github/scripts/unwrap_markdown.py, the same as pico-bootLoader's). Headings,
+# tables and code are left alone; CHANGELOG.md and the text above stay wrapped.
+python3 -I .github/scripts/unwrap_markdown.py "$OUT" > "$OUT.tmp" && mv "$OUT.tmp" "$OUT" || exit 1
+
 echo "Wrote $OUT"

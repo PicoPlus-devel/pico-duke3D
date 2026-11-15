@@ -240,8 +240,13 @@ scripts locally *is* testing the pipeline.
 ./release-notes.sh v1.0          # writes release-notes.md, the release body
 ```
 
-`buildAll.sh` builds the standalone variant for all three boards and renames each
-`duke3d_game.uf2` to `duke3d_game_<board>.uf2` — three files, and that is the whole
+`release-notes.sh` joins the wrapped lines of each paragraph and list item
+(`.github/scripts/unwrap_markdown.py`, as in pico-bootLoader): GitHub shows release
+notes like a comment, where every line break stays a break. `CHANGELOG.md` stays
+wrapped.
+
+`buildAll.sh` builds the standalone variant for all six boards and renames each
+`duke3d_game.uf2` to `duke3d_game_<board>.uf2` — six files, and that is the whole
 release. There is no data file to ship: `DUKE3D.GRP` streams from the SD card, so
 nothing lives in flash beside the image.
 
