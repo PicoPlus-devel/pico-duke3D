@@ -48,11 +48,77 @@ foreach(_o IN LISTS DUKE_AUDIOLIB_OBJS)
     list(APPEND DUKE_AUDIO_PATH_OBJS "*libduke.a:${_o}")
 endforeach()
 
-function(duke_use_psram_linker_script target)
-    set(_src "${PICO_SDK_PATH}/src/rp2_common/pico_crt0/rp2350/memmap_default.ld")
-    set(_dst "${CMAKE_BINARY_DIR}/memmap_duke.ld")
+# Pico SDK >= 2.3.0 no longer ships a flat RP2350 memmap_default.ld to copy. It
+# assembles the linker script from small include files (pico_standard_link/
+# script_include) and lets a target override any of them with
+# pico_add_linker_script_override_path. With such an SDK the patches below are
+# applied to the include files they touch instead: every patch text occurs in
+# exactly one of them. The files are joined into one text with a marker line in
+# front of each, patched like the flat script, split again, and the ones that
+# changed go into a directory of their own that the linker searches first.
+set(_DUKE_LD_FRAGMENTS
+    memory_flash.incl memory_psram.incl memory_ram.incl
+    default_text_excludes.incl default_rodata_excludes.incl
+    section_default_data.incl sections_stack.incl section_end.incl)
 
-    file(READ "${_src}" _ld)
+function(_duke_ld_fragments_read out)
+    set(_dir "${PICO_SDK_PATH}/src/rp2_common/pico_standard_link/script_include")
+    set(_text "")
+    foreach(_f IN LISTS _DUKE_LD_FRAGMENTS)
+        if (NOT EXISTS "${_dir}/${_f}")
+            message(FATAL_ERROR "psram_linker: ${_dir}/${_f} not found")
+        endif()
+        file(READ "${_dir}/${_f}" _c)
+        string(APPEND _text "/*@@ ${_f} @@*/\n${_c}")
+    endforeach()
+    set(${out} "${_text}" PARENT_SCOPE)
+endfunction()
+
+function(_duke_ld_fragments_write target text)
+    set(_sdk "${PICO_SDK_PATH}/src/rp2_common/pico_standard_link/script_include")
+    set(_dir "${CMAKE_BINARY_DIR}/${target}_ld")
+    file(REMOVE_RECURSE "${_dir}")
+    set(_changed "")
+    list(LENGTH _DUKE_LD_FRAGMENTS _n)
+    math(EXPR _last "${_n} - 1")
+    foreach(_i RANGE ${_last})
+        list(GET _DUKE_LD_FRAGMENTS ${_i} _f)
+        set(_mark "/*@@ ${_f} @@*/\n")
+        string(FIND "${text}" "${_mark}" _a)
+        string(LENGTH "${_mark}" _ml)
+        math(EXPR _a "${_a} + ${_ml}")
+        if (_i EQUAL _last)
+            string(LENGTH "${text}" _b)
+        else()
+            math(EXPR _j "${_i} + 1")
+            list(GET _DUKE_LD_FRAGMENTS ${_j} _g)
+            string(FIND "${text}" "/*@@ ${_g} @@*/\n" _b)
+        endif()
+        math(EXPR _len "${_b} - ${_a}")
+        string(SUBSTRING "${text}" ${_a} ${_len} _c)
+        file(READ "${_sdk}/${_f}" _orig)
+        if (NOT _c STREQUAL _orig)
+            file(WRITE "${_dir}/${_f}" "${_c}")
+            list(APPEND _changed ${_f})
+        endif()
+    endforeach()
+    pico_add_linker_script_override_path(${target} "${_dir}" FILES ${_changed})
+    message(STATUS "psram_linker: ${target} overrides ${_changed} (in ${_dir})")
+endfunction()
+
+function(duke_use_psram_linker_script target)
+    if (COMMAND pico_add_linker_script_override_path)
+        # SDK >= 2.3.0: patch the include files (see above).
+        set(_sdk23 TRUE)
+        set(_src "the SDK's script_include files")
+        _duke_ld_fragments_read(_ld)
+    else()
+        set(_sdk23 FALSE)
+        set(_src "${PICO_SDK_PATH}/src/rp2_common/pico_crt0/rp2350/memmap_default.ld")
+        set(_dst "${CMAKE_BINARY_DIR}/memmap_duke.ld")
+
+        file(READ "${_src}" _ld)
+    endif()
     string(JOIN " " _audio ${DUKE_AUDIO_PATH_OBJS})
 
     # 0) Bootloader variant: move FLASH to the pico-bootLoader app partition.
@@ -141,13 +207,29 @@ function(duke_use_psram_linker_script target)
     #    Doing these as separate string(REPLACE)s would be a trap — they all
     #    match the same "RAM(rwx) ... LENGTH = 512k" text, so the second would
     #    splice itself into the middle of the first's output.
-    string(REPLACE
-        "RAM(rwx) : ORIGIN =  0x20000000, LENGTH = 512k"
-        "RAM(rwx) : ORIGIN =  0x20000000, LENGTH = 512k - ${DUKE_STACK_REGION}
+    if (_sdk23)
+        # SDK >= 2.3.0 declares RAM from RAM_ORIGIN/RAM_LENGTH (memory_ram.incl)
+        # and declares PSRAM itself (memory_psram.incl, from a generated
+        # pico_psram_region.ld that is 0 bytes long by default), so only the
+        # PSRAM length is filled in here.
+        string(REPLACE
+            "RAM(rwx) : ORIGIN =  RAM_ORIGIN, LENGTH = RAM_LENGTH"
+            "RAM(rwx) : ORIGIN =  RAM_ORIGIN, LENGTH = RAM_LENGTH - ${DUKE_STACK_REGION}
+    STACK(rw) : ORIGIN = RAM_ORIGIN + RAM_LENGTH - ${DUKE_STACK_REGION}, LENGTH = ${DUKE_STACK_REGION}"
+            _ld "${_ld}")
+        string(REPLACE
+            "INCLUDE \"pico_psram_region.ld\""
+            "PSRAM(rwx) : ORIGIN = 0x11000000, LENGTH = ${DUKE_PSRAM_SIZE}"
+            _ld "${_ld}")
+    else()
+        string(REPLACE
+            "RAM(rwx) : ORIGIN =  0x20000000, LENGTH = 512k"
+            "RAM(rwx) : ORIGIN =  0x20000000, LENGTH = 512k - ${DUKE_STACK_REGION}
     STACK(rw) : ORIGIN = 0x20080000 - ${DUKE_STACK_REGION}, LENGTH = ${DUKE_STACK_REGION}
     PSRAM(rwx) : ORIGIN = 0x11000000, LENGTH = ${DUKE_PSRAM_SIZE}"
-        _ld "${_ld}")
-    if (NOT _ld MATCHES "STACK\\(rw\\)")
+            _ld "${_ld}")
+    endif()
+    if (NOT _ld MATCHES "STACK\\(rw\\)" OR NOT _ld MATCHES "PSRAM\\(rwx\\) : ORIGIN = 0x11000000")
         message(FATAL_ERROR "psram_linker: MEMORY rewrite failed in ${_src}")
     endif()
 
@@ -156,14 +238,29 @@ function(duke_use_psram_linker_script target)
     #    the SDK's own "remaining .text and .rodata" catch-all inside .data,
     #    which is a RAM section that crt0 copies from flash at boot. No source
     #    annotation needed, so the vendored audiolib stays untouched.
-    string(REPLACE
-        "*(EXCLUDE_FILE(*libgcc.a: *libc.a:*lib_a-mem*.o *libm.a:) .text*)"
-        "*(EXCLUDE_FILE(*libgcc.a: *libc.a:*lib_a-mem*.o *libm.a: ${_audio}) .text*)"
-        _ld "${_ld}")
-    string(REPLACE
-        "*(EXCLUDE_FILE(*libgcc.a: *libc.a:*lib_a-mem*.o *libm.a:) .rodata*)"
-        "*(EXCLUDE_FILE(*libgcc.a: *libc.a:*lib_a-mem*.o *libm.a: ${_audio}) .rodata*)"
-        _ld "${_ld}")
+    if (_sdk23)
+        # SDK >= 2.3.0 keeps the two lists in default_text_excludes.incl and
+        # default_rodata_excludes.incl, with different contents: append to
+        # whatever they hold.
+        string(REGEX REPLACE "EXCLUDE_FILE\\(([^)]*)\\)" "EXCLUDE_FILE(\\1 ${_audio})"
+            _ld "${_ld}")
+        string(REGEX MATCHALL "EXCLUDE_FILE\\([^)]*duke_audio\\.c\\.o[^)]*\\)" _hits "${_ld}")
+        list(LENGTH _hits _n)
+        if (NOT _n EQUAL 2)
+            message(FATAL_ERROR
+                "psram_linker: expected the .text and .rodata EXCLUDE_FILE lists in "
+                "${_src}, found ${_n}. The audio path would stay in flash.")
+        endif()
+    else()
+        string(REPLACE
+            "*(EXCLUDE_FILE(*libgcc.a: *libc.a:*lib_a-mem*.o *libm.a:) .text*)"
+            "*(EXCLUDE_FILE(*libgcc.a: *libc.a:*lib_a-mem*.o *libm.a: ${_audio}) .text*)"
+            _ld "${_ld}")
+        string(REPLACE
+            "*(EXCLUDE_FILE(*libgcc.a: *libc.a:*lib_a-mem*.o *libm.a:) .rodata*)"
+            "*(EXCLUDE_FILE(*libgcc.a: *libc.a:*lib_a-mem*.o *libm.a: ${_audio}) .rodata*)"
+            _ld "${_ld}")
+    endif()
 
     # 3) Audio-path DATA -> SRAM. The blanket *libduke.a:* in .psram_bss below
     #    was also sweeping audiolib's per-sample state into PSRAM (MV_PanTable,
@@ -236,6 +333,10 @@ ${_audiolib_bss}        . = ALIGN(4);
             "to SRAM, which does not fit.")
     endif()
 
-    file(WRITE "${_dst}" "${_ld}")
-    pico_set_linker_script(${target} "${_dst}")
+    if (_sdk23)
+        _duke_ld_fragments_write(${target} "${_ld}")
+    else()
+        file(WRITE "${_dst}" "${_ld}")
+        pico_set_linker_script(${target} "${_dst}")
+    endif()
 endfunction()
