@@ -306,6 +306,18 @@ endif()
 
 duke_use_psram_linker_script(duke3d_game)
 
+# Pico SDK 2.3 adds two small SRAM users that this port does not need; both
+# options are unknown to, and ignored by, older SDKs.
+#   PICO_THREAD_LOCAL_CORE1_REINITIALIZE=0: no __thread / thread_local variables
+#     exist here, so core 1 needs no TLS block of its own (saves 8 bytes on Arm).
+#   PICO_SYNC_EXCLUSIVE_ACCESS_EVENT_WORKAROUND=0: RP2350 mutex waits keep
+#     spinning as with SDK 2.2 instead of sleeping in __wfe; this only affects
+#     power use, and the workaround's RAM code costs 28 (Arm) / 72 (RISC-V) bytes.
+target_compile_definitions(duke3d_game PRIVATE
+    PICO_THREAD_LOCAL_CORE1_REINITIALIZE=0
+    PICO_SYNC_EXCLUSIVE_ACCESS_EVENT_WORKAROUND=0
+)
+
 # Stamp the release version into the binary info, so `picotool info` on a UF2
 # names the release it came from. "dev" unless -DDUKE_RELEASE_VERSION is passed,
 # which is what buildAll.sh does under CI (see CMakeLists.txt).

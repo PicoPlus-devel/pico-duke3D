@@ -145,8 +145,8 @@ Adding a board is a `<tag>_cflags.h` plus a `<tag>-build.sh`; nothing in
 
 ## Build
 
-Requires `PICO_SDK_PATH` in the environment (SDK 2.2.0, arm-none-eabi-gcc 13.2.Rel1)
-and `picotool`.
+Requires `PICO_SDK_PATH` in the environment (SDK 2.2.0 or 2.3.1, arm-none-eabi-gcc
+13.2.Rel1) and `picotool`.
 
 ```sh
 ./fruitjam-build.sh                      # -> build_fruitjam/src/pico/duke3d_game.uf2

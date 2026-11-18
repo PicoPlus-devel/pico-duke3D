@@ -4,6 +4,12 @@ Add a section per release, headed with the tag. `release-notes.sh` extracts the
 section matching the tag being released and puts it in the GitHub release body,
 so keep the heading text exactly the tag name.
 
+## Next release
+
+### Changed
+
+- Built with Pico SDK 2.3.1. This leaves a little more memory free, about 0.4 KB.
+
 ## v0.7
 
 ### Added

@@ -47,8 +47,10 @@ function(duke_bootloader_target_props TARGET)
     # picotool >= 2.2.0 re-detects the chip from the ELF rather than trusting
     # --family, and assumes RP2040 for images that do not start at 0x10000000 —
     # which is exactly what a relinked image looks like. Tell it explicitly.
-    # The option does not exist before 2.2.0, so version-guard it.
-    if(PICO_PLATFORM MATCHES "rp2350")
+    # The option does not exist before 2.2.0, so version-guard it. Pico SDK
+    # >= 2.3.0 (which has pico_add_linker_script_override_path) passes
+    # --platform itself, and picotool rejects a second one.
+    if(PICO_PLATFORM MATCHES "rp2350" AND NOT COMMAND pico_add_linker_script_override_path)
         find_program(_duke_picotool picotool)
         if(_duke_picotool)
             execute_process(COMMAND ${_duke_picotool} version --semantic
