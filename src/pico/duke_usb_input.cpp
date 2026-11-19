@@ -122,6 +122,9 @@
 #include "duke_usb_frame.h"
 #endif
 #include "gamepad.h"
+#if BUILD_FOR_BOOTLOADER
+#include "duke_boot.h"    // pico-bootLoader attract mode
+#endif
 
 // The CMake USB transport choice (ENABLE_PIO_USB) and the board header's
 // HAS_USBPIO have to agree: they configure different halves of the same
@@ -991,6 +994,11 @@ void readmousebstatus(short *bstatus)
             printf(" -> %02x\n", (unsigned)b);
         }
     }
+#endif
+#if BUILD_FOR_BOOTLOADER
+    // pico-bootLoader attract mode: a mouse button means a player is there.
+    if (b)
+        duke_attract_input();
 #endif
     if (bstatus) *bstatus = b;
 }

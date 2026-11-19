@@ -26,6 +26,7 @@
 
 #include "duke_fatal.h"
 #include "duke_dostext.h"
+#include "duke_boot.h"
 
 // pico_display.c (owns the RGB555 scanout surface).
 extern void duke_video_ensure_up(void);
@@ -39,6 +40,9 @@ static volatile bool s_in_fatal = false;
 static void __attribute__((noreturn)) halt_forever(void)
 {
     stdio_flush();
+#if BUILD_FOR_BOOTLOADER
+    duke_attract_after_fatal();     // returns unless attract mode started Duke
+#endif
     // No __breakpoint() here: with no debugger attached BKPT escalates to a
     // HardFault, and isr_hardfault's breadcrumb would then be the last thing
     // anyone sees on the UART instead of the reason we came here for.

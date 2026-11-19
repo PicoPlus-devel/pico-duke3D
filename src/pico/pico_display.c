@@ -22,6 +22,9 @@
 #include "video_output.h"          // pico_hdmi
 #include "duke_dostext.h"
 #include "duke_leds.h"
+#if BUILD_FOR_BOOTLOADER
+#include "duke_boot.h"
+#endif
 #include "hstx_data_island_queue.h"
 #include "duke_settings.h"
 
@@ -316,6 +319,12 @@ static uint8_t s_lastkey = 0;
 
 void pico_display_post_key(uint8_t rawcode)
 {
+#if BUILD_FOR_BOOTLOADER
+    // pico-bootLoader attract mode: a key or pad button (not a release) means
+    // a player is there.
+    if (!(rawcode & 0x80))
+        duke_attract_input();
+#endif
     s_lastkey = rawcode;
     keyhandler();
 }
@@ -387,6 +396,9 @@ void duke_pico_idle(void)
             last_io_us = now_us;
             duke_usb_poll();
             duke_audio_poll_headphone();
+#if BUILD_FOR_BOOTLOADER
+            duke_attract_tick();   // pico-bootLoader attract mode's game time
+#endif
         }
     }
 

@@ -26,6 +26,18 @@ extern "C" {
 // file deliberately pulls in no engine headers. Never returns.
 void __attribute__((noreturn)) duke_reboot_to_bootsel(void);
 
+#if defined(BUILD_FOR_BOOTLOADER) && BUILD_FOR_BOOTLOADER
+// pico-bootLoader attract mode (duke_boot.c): the loader started Duke to show
+// it off. The demos play; a key, button or mouse button hands Duke to the
+// player (duke_attract_input), and when nobody has done so within the game time
+// duke_attract_tick returns to the loader, which starts its next application.
+void duke_attract_input(void);
+void duke_attract_tick(void);
+// After a fatal error is on screen: back to the loader a few seconds later when
+// attract mode started Duke; returns at once otherwise.
+void duke_attract_after_fatal(void);
+#endif
+
 #ifdef __cplusplus
 }
 #endif
