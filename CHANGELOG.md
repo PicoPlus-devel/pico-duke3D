@@ -4,7 +4,12 @@ Add a section per release, headed with the tag. `release-notes.sh` extracts the
 section matching the tag being released and puts it in the GitHub release body,
 so keep the heading text exactly the tag name.
 
-## Next release
+## v0.7_bl
+
+This version is built for
+[pico-bootLoader](https://github.com/PicoPlus-devel/pico-bootLoader) only, and is
+included in its SD-card archive. It has no release of its own: without pico-bootLoader,
+keep using v0.7.
 
 ### Added
 
