@@ -6,6 +6,10 @@ so keep the heading text exactly the tag name.
 
 ## Next release
 
+### Added
+
+- **Attract mode.** pico-bootLoader's new attract mode can now start Duke Nukem 3D on boards with PSRAM: the demos play until a key or button is pressed.
+
 ### Changed
 
 - Built with Pico SDK 2.3.1. This leaves a little more memory free, about 0.4 KB.

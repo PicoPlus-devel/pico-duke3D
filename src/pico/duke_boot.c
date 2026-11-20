@@ -191,6 +191,79 @@ static void setup_clocks(void)
 // attached BKPT escalates to a HardFault, and isr_hardfault's breadcrumb would
 // then be the last thing on the UART instead of the reason.)
 // ---------------------------------------------------------------------------
+#if BUILD_FOR_BOOTLOADER
+// ---------------------------------------------------------------------------
+// pico-bootLoader attract mode. Local copy of the contract in
+// pico_shared/attract.h (pico-bootLoader): the loader sets scratch[6] to
+// 0xB007ED01 for every start, and for an attract-mode start scratch[7] to
+// LOADER_ATTRACT_MAGIC with the game time in minutes in the low byte. The first
+// input clears scratch[7] and Duke is the player's; otherwise, once the time is
+// up, Duke resets with scratch[7] left as it is and the loader goes on to its
+// next application.
+// ---------------------------------------------------------------------------
+#include "pico/binary_info.h"
+// The loader picks Duke for attract mode only with this in the image, the game
+// data on the card and PSRAM on the board ("@psram").
+bi_decl(bi_program_feature("attract:@psram|/roms/duke3d/DUKE3D.GRP"));
+
+#define LOADER_LAUNCH_MAGIC       0xB007ED01u
+#define LOADER_ATTRACT_MAGIC      0xB007A000u
+#define LOADER_ATTRACT_MAGIC_MASK 0xFFFFF000u
+#define LOADER_ATTRACT_MINUTES    0x000000FFu
+
+static bool duke_attract_active(void)
+{
+    const uint32_t w = watchdog_hw->scratch[7];
+    return watchdog_hw->scratch[6] == LOADER_LAUNCH_MAGIC &&
+           (w & LOADER_ATTRACT_MAGIC_MASK) == LOADER_ATTRACT_MAGIC &&
+           (w & LOADER_ATTRACT_MINUTES) != 0;
+}
+
+void duke_attract_input(void)
+{
+    if (!duke_attract_active())
+        return;
+    watchdog_hw->scratch[7] = 0;
+    printf("duke3d: attract mode: a player took over\n");
+}
+
+// Back to the loader with scratch[7] kept, so it goes on to its next
+// application. As _exit(0) below, without the config write a quit makes:
+// nobody played.
+static void __attribute__((noreturn)) duke_attract_hand_back(void)
+{
+    stdio_flush();
+    duke_leds_off();
+    duke_wiipad_shutdown();
+    watchdog_reboot(0, 0, 1);
+    for (;;)
+        tight_loop_contents();
+}
+
+// From the 2 ms I/O slot of duke_pico_idle(), so it costs nothing on the hot path.
+void duke_attract_tick(void)
+{
+    if (!duke_attract_active())
+        return;
+    const uint32_t minutes = watchdog_hw->scratch[7] & LOADER_ATTRACT_MINUTES;
+    if (time_us_64() < (uint64_t)minutes * 60u * 1000000u)
+        return;
+    printf("\nduke3d: attract mode: time is up, back to the bootloader\n");
+    duke_attract_hand_back();
+}
+
+// From duke_fatal.c, once the error is on screen: in attract mode nobody is
+// there to press RESET, so after a few seconds the loader goes on.
+void duke_attract_after_fatal(void)
+{
+    if (!duke_attract_active())
+        return;
+    busy_wait_ms(5000);
+    printf("duke3d: attract mode: error, back to the bootloader\n");
+    duke_attract_hand_back();
+}
+#endif
+
 void __attribute__((noreturn)) _exit(int status)
 {
     // _nextpage() stops running from here on, so without this the heartbeat
